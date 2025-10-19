@@ -1,0 +1,16 @@
+gradio==4.44.1
+gradio_image_prompter
+diffusers
+transformers==4.49.0
+pydantic==2.10.6
+einops
+huggingface_hub
+opencv-python
+trimesh
+omegaconf
+scikit-image
+numpy
+peft
+pytorch-lightning
+open3d
+pymeshlab

@@ -1,0 +1,3 @@
+这是整个工作区，其中MIDI-3D-committed-files是MIDI文件夹。
+
+寒哥的git也不太会用。我们首先俩人都有一个branch，比如我的就是dev_hans，你的就是dev_echo，在本地写完的代码先提交到远程的branch，最后测试过没问题再merge到main分支。我们都学学咋用git实现版本控制。

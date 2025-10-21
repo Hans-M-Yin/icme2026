@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="0c93124b-a147-4e62-887f-477857a5fd44" name="icme">
+        <fileTransfer rootFolder="/home1/yzh" accessType="SFTP" host="222.29.51.247" port="22" sshConfigId="4058f885-a8ae-4fc4-a7b5-d2c3a7b47c24" sshConfig="yzh@222.29.51.247:22 agent" authAgent="true">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>

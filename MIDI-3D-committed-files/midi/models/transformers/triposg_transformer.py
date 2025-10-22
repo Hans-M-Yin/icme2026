@@ -158,6 +158,28 @@ class DiTBlock(nn.Module):
             Whether to use normalization in QK calculation. Defaults to `True`.
     """
 
+    # @TODO:
+    """
+    这个DiT Block就是一层，他虽然注释里面写的是From Tencent Hunyuan，但是这个基本是自己写的，比如use_cross_attn1和use_cross_attn2等等。
+    总的来说，这个DiT Block就有一定扩展性，可以通过传参数实现控制DiT Block的运作流程。
+    这里包含了几个Attention块，我们要修改的最关键部分就是这个Attention，因为Residual Add的方式不太现实，所以我们就再加一层Attention。
+    关于这个Attention，我们估计要好好设计一下，当然可以直接用标准的Cross Attention，但是为了novelty，最好还是稍微做一点修改。
+    
+    我们需要修改这个DiT Block，在其中加入一个Cross Attention层实现草图features的融合。
+    
+    特别需要注意的是：对于如何融合DiT latent和草图latent，我们目前没有**完全确定**！所以你应该把这个模块封装起来，而不是简单的添加一个Attention！
+    例如，你可能需要定义一个草图融合类：
+    class SketchFusionModule(nn.Module):
+        fusion_type = cross_attention / residual_add
+        def __init__():
+            fusion_type 如果是 cross_attention:
+                self.fusion_module = Attention
+            fusion_type 如果是 residual_add:
+                self.fusion_module = ResidualAdd
+        
+        def forward(输入):
+            return self.fusion_module(输入)
+    """
     def __init__(
         self,
         dim: int,
@@ -185,6 +207,7 @@ class DiTBlock(nn.Module):
         qk_norm: bool = True,
         qkv_bias: bool = True,
     ):
+        # @TODO: 这里初始化现在多需要什么参数？
         super().__init__()
 
         self.use_self_attention = use_self_attention
@@ -290,6 +313,9 @@ class DiTBlock(nn.Module):
         skip: Optional[torch.Tensor] = None,
         attention_kwargs: Optional[Dict[str, Any]] = None,
     ) -> torch.Tensor:
+        # @TODO: 最显然的，现在除了encoder_hidden_states和encoder_hidden_states2，还需要一组草图的features，注意这里的DiTBlock假如
+        # @TODO: 是第i层，那么这里输入应该提供第i层草图的latent。然后连同DiT输出的logits一起输入到融合的模块，得到结果。
+
         # Prepare attention kwargs
         attention_kwargs = attention_kwargs or {}
 

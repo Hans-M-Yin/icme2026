@@ -42,7 +42,12 @@ def preprocess_image_for_dinov2(
     return image
 
 
-def to_pil_image(image: Float[Tensor, "B C H W"]) -> List[Image.Image]:
+def to_pil_image(image) -> List[Image.Image]:
+    # FIX: Add type check
+    if isinstance(image, Image.Image):
+        return [image]
+    elif isinstance(image, list) and isinstance(image[0], Image.Image):
+        return image
     batch_size = image.shape[0]
     to_pil = lambda x: Image.fromarray((x * 255).astype(np.uint8))
     if image.shape[1] == 3:  # rgb

@@ -90,7 +90,7 @@
 # Please note that the use of this code is subject to the terms and conditions
 # of the Tencent Hunyuan Community License Agreement, including the Acceptable Use Policy.
 
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union, List
 
 import torch
 import torch.utils.checkpoint
@@ -119,8 +119,10 @@ from diffusers.utils import (
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 from torch import nn
 
-from ..attention_processor import FusedTripoSGAttnProcessor2_0, TripoSGAttnProcessor2_0
+from ..attention_processor import FusedTripoSGAttnProcessor2_0, TripoSGAttnProcessor2_0, SketchFusionAttnProcessor
 from .modeling_outputs import Transformer1DModelOutput
+
+from ...sketch.fusion_adapter import SketchFusionAdapter, FusionAdapterConfig
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -206,6 +208,10 @@ class DiTBlock(nn.Module):
         skip_norm_last: bool = False,  # this is an error
         qk_norm: bool = True,
         qkv_bias: bool = True,
+
+        use_sketch_attention: bool = False,
+        sketch_attention_dim: Optional[int] = None
+
     ):
         # @TODO: 这里初始化现在多需要什么参数？
         super().__init__()
@@ -213,10 +219,36 @@ class DiTBlock(nn.Module):
         self.use_self_attention = use_self_attention
         self.use_cross_attention = use_cross_attention
         self.use_cross_attention_2 = use_cross_attention_2
+
+        self.use_sketch_attention = use_sketch_attention
+        self.sketch_attention_dim = sketch_attention_dim
+
         self.skip_concat_front = skip_concat_front
         self.skip_norm_last = skip_norm_last
         # Define 3 blocks. Each block has its own normalization layer.
         # NOTE: when new version comes, check norm2 and norm 3
+
+        #
+        if use_sketch_attention:
+            if (
+                self_attention_norm_type == "fp32_layer_norm"
+                or self_attention_norm_type is None
+            ):
+                self.norm_sketch = FP32LayerNorm(dim, norm_eps, norm_elementwise_affine)
+            else:
+                raise NotImplementedError
+
+            self.attn_sketch = Attention(
+                query_dim=dim,
+                cross_attention_dim=sketch_attention_dim,
+                dim_head=dim // num_attention_heads,
+                heads=num_attention_heads,
+                qk_norm="rms_norm" if qk_norm else None,
+                eps=1e-6,
+                bias=qkv_bias,
+                processor=SketchFusionAttnProcessor(),
+            )
+
         # 1. Self-Attn
         if use_self_attention:
             if (
@@ -308,6 +340,7 @@ class DiTBlock(nn.Module):
         hidden_states: torch.Tensor,
         encoder_hidden_states: Optional[torch.Tensor] = None,
         encoder_hidden_states_2: Optional[torch.Tensor] = None,
+        sketch_encoder_hidden_states: Optional[torch.Tensor] = None,
         temb: Optional[torch.Tensor] = None,
         image_rotary_emb: Optional[torch.Tensor] = None,
         skip: Optional[torch.Tensor] = None,
@@ -337,6 +370,7 @@ class DiTBlock(nn.Module):
             else:
                 cat = self.skip_norm(cat)
                 hidden_states = self.skip_linear(cat)
+
 
         # 1. Self-Attention
         if self.use_self_attention:
@@ -373,6 +407,13 @@ class DiTBlock(nn.Module):
                     image_rotary_emb=image_rotary_emb,
                     **attention_kwargs,
                 )
+            if self.use_sketch_attention:
+                hidden_states = hidden_states + self.attn_sketch(
+                    self.norm_sketch(hidden_states),
+                    encoder_hidden_states=sketch_encoder_hidden_states,
+                    image_rotary_emb=image_rotary_emb,
+                    **attention_kwargs,
+                )
 
         # FFN Layer ### TODO: switch norm2 and norm3 in the state dict
         mlp_inputs = self.norm3(hidden_states)
@@ -387,42 +428,6 @@ class TripoSGDiTModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
     Inherit ModelMixin and ConfigMixin to be compatible with the sampler StableDiffusionPipeline of diffusers.
 
-    Parameters:
-        num_attention_heads (`int`, *optional*, defaults to 16):
-            The number of heads to use for multi-head attention.
-        attention_head_dim (`int`, *optional*, defaults to 88):
-            The number of channels in each head.
-        in_channels (`int`, *optional*):
-            The number of channels in the input and output (specify if the input is **continuous**).
-        patch_size (`int`, *optional*):
-            The size of the patch to use for the input.
-        activation_fn (`str`, *optional*, defaults to `"geglu"`):
-            Activation function to use in feed-forward.
-        sample_size (`int`, *optional*):
-            The width of the latent images. This is fixed during training since it is used to learn a number of
-            position embeddings.
-        dropout (`float`, *optional*, defaults to 0.0):
-            The dropout probability to use.
-        cross_attention_dim (`int`, *optional*):
-            The number of dimension in the clip text embedding.
-        hidden_size (`int`, *optional*):
-            The size of hidden layer in the conditioning embedding layers.
-        num_layers (`int`, *optional*, defaults to 1):
-            The number of layers of Transformer blocks to use.
-        mlp_ratio (`float`, *optional*, defaults to 4.0):
-            The ratio of the hidden layer size to the input size.
-        learn_sigma (`bool`, *optional*, defaults to `True`):
-             Whether to predict variance.
-        cross_attention_dim_t5 (`int`, *optional*):
-            The number dimensions in t5 text embedding.
-        pooled_projection_dim (`int`, *optional*):
-            The size of the pooled projection.
-        text_len (`int`, *optional*):
-            The length of the clip text embedding.
-        text_len_t5 (`int`, *optional*):
-            The length of the T5 text embedding.
-        use_style_cond_and_image_meta_size (`bool`,  *optional*):
-            Whether or not to use style condition and image meta size. True for version <=1.1, False for version >= 1.2
     """
 
     _supports_gradient_checkpointing = True
@@ -436,6 +441,7 @@ class TripoSGDiTModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         num_layers: int = 21,
         cross_attention_dim: int = 768,
         cross_attention_2_dim: int = 1024,
+        sketch_attention_dim: int = 768
     ):
         super().__init__()
         self.out_channels = in_channels
@@ -477,6 +483,9 @@ class TripoSGDiTModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     skip_norm_last=True,  # this is an error
                     qk_norm=True,  # See http://arxiv.org/abs/2302.05442 for details.
                     qkv_bias=False,
+                    use_sketch_attention=True,
+                    # @TODO: add sketch_attention_dim into configuration.
+                    sketch_attention_dim=self.config.sketch_attention_dim
                 )
                 for layer in range(num_layers)
             ]
@@ -486,6 +495,9 @@ class TripoSGDiTModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         self.proj_out = nn.Linear(self.inner_dim, self.out_channels, bias=True)
 
         self.gradient_checkpointing = False
+
+        # 还是把fusion_adapter分离出去吧
+        # self.sketch_fusion_adapter = SketchFusionAdapter(self.fusion_adapter_config, self.sketch_vision_tower_config)
 
     def _set_gradient_checkpointing(self, module, value=False):
         self.gradient_checkpointing = value
@@ -646,21 +658,12 @@ class TripoSGDiTModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         image_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         attention_kwargs: Optional[Dict[str, Any]] = None,
         return_dict: bool = True,
+        sketch_hidden_states: Optional[List[torch.Tensor]] = None
     ):
         """
-        The [`HunyuanDiT2DModel`] forward method.
 
-        Args:
-        hidden_states (`torch.Tensor` of shape `(batch size, dim, height, width)`):
-            The input tensor.
-        timestep ( `torch.LongTensor`, *optional*):
-            Used to indicate denoising step.
-        encoder_hidden_states ( `torch.Tensor` of shape `(batch size, sequence len, embed dims)`, *optional*):
-            Conditional embeddings for cross attention layer.
-        encoder_hidden_states_2 ( `torch.Tensor` of shape `(batch size, sequence len, embed dims)`, *optional*):
-            Conditional embeddings for cross attention layer.
-        return_dict: bool
-            Whether to return a dictionary.
+        sketch_hidden_states: layer-wise hidden states. shape: [[bsz, seq_len, hidden_size] * block_num], 到底怎么融合由这里
+        输入的sketch_hidden_states决定。
         """
 
         if attention_kwargs is not None:
@@ -693,6 +696,9 @@ class TripoSGDiTModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         hidden_states = torch.cat([temb, hidden_states], dim=1)
 
         skips = []
+
+        assert len(sketch_hidden_states) == len(self.blocks), f"Sketch hidden states unmatch blocks. {len(sketch_hidden_states)}, {len(self.blocks)}"
+
         for layer, block in enumerate(self.blocks):
             skip = None if layer <= self.config.num_layers // 2 else skips.pop()
 
@@ -712,6 +718,7 @@ class TripoSGDiTModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     hidden_states,
                     encoder_hidden_states,
                     encoder_hidden_states_2,
+                    sketch_hidden_states[layer],
                     temb,
                     image_rotary_emb,
                     skip,
@@ -723,6 +730,7 @@ class TripoSGDiTModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
                     encoder_hidden_states_2=encoder_hidden_states_2,
+                    sketch_hidden_states=sketch_hidden_states[layer],
                     temb=temb,
                     image_rotary_emb=image_rotary_emb,
                     skip=skip,

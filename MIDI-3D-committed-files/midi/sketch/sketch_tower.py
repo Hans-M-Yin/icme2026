@@ -134,6 +134,7 @@ class SketchVisionTower(nn.Module):
         )
         image_features = self.feature_select(image_forward_outs)
 
+        # Note that this include initial features.
         return image_features
 
     @property

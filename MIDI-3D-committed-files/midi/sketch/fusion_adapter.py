@@ -28,12 +28,14 @@ And the new attention method are novelty we need.
 import dataclasses
 from typing import List, Tuple, Union
 import torch.nn as nn
+from .sketch_tower import SketchVisionTower, SketchVisionTowerConfig
+import torch
 import torch.nn.functional as F
 # @TODO: Use projector or not is not determined. For implementation, the difference between using projectors or not is
 # @TODO: minor, we only need to consider dimensions. In MIDI's implementation, it seems that the cross attention module
 # @TODO: doesn't need same dimension between two sequence as well.
 
-
+# @TODO: We need implement something about **device setting**.
 
 @dataclasses.dataclass
 class FusionAdapterConfig:
@@ -72,7 +74,7 @@ class SketchFusionAdapter(nn.Module):
     because SketchVisionTower layer num (CLIP is 15) is not equal to DiT layer num. So layer by layer is not available.
     Manually order specific layers to fuse is the simplest way.
     """
-    def __init__(self, config: FusionAdapterConfig):
+    def __init__(self, config: FusionAdapterConfig, sketch_tower_config: SketchVisionTowerConfig):
 
         super(SketchFusionAdapter, self).__init__()
         self.config = config
@@ -97,6 +99,7 @@ class SketchFusionAdapter(nn.Module):
         vision_tower.forward() to get valina latents, and then uses projectors to get projected latents. projected latents
         and 
         """
+        self.sketch_tower = SketchVisionTower(sketch_tower_config)
 
     def create_projector(self, projector_type: str, input_dim, output_dim, hidden_dim: int = None) -> nn.Module:
         """
@@ -150,5 +153,18 @@ class SketchFusionAdapter(nn.Module):
 
         return False
 
-    # def forward(self, ):
+    def forward(self, images) -> List[List[torch.Tensor]]:
+        """
+        Input raw sketch images and firstly encode them through self.sketch_tower and then project them through projector.
+        :param images: raw sketch images, supporting PIL.Image.Image, numpy.ndarray and torch.Tensor
+        :return: projected latent sequences used for DiT fusion
+        """
+        # valina_latents: List[torch.tensor] [[B, L, H]], each element is one layer's latent.
+        valina_latents = self.sketch_tower(images)
+        selected_latents = valina_latents[self.vision_layer_seqs]
+        selected_projected_latents = [self.projectors[i](selected_latents[i]) for i in range(len(selected_latents))]
+        return selected_projected_latents
+        
+
+
 

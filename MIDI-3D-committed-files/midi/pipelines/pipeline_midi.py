@@ -27,7 +27,7 @@ from ..models.autoencoders import TripoSGVAEModel
 from ..models.transformers import TripoSGDiTModel, set_transformer_attn_processor
 from .pipeline_triposg_output import TripoSGPipelineOutput
 from .pipeline_utils import TransformerDiffusionMixin
-
+from ..sketch.fusion_adapter import SketchFusionAdapter, FusionAdapterConfig
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
@@ -111,6 +111,7 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         image_encoder_2: Dinov2Model,
         feature_extractor_1: CLIPImageProcessor,
         feature_extractor_2: BitImageProcessor,
+        sketch_fusion_adapter: SketchFusionAdapter
     ):
         super().__init__()
 
@@ -122,6 +123,7 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
             image_encoder_2=image_encoder_2,
             feature_extractor_1=feature_extractor_1,
             feature_extractor_2=feature_extractor_2,
+            sketch_fusion_adapter=sketch_fusion_adapter
         )
 
     @property
@@ -203,6 +205,12 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         uncond_image_embeds = torch.zeros_like(image_embeds)
 
         return image_embeds, uncond_image_embeds
+    def get_sketch_fusion_latent(
+            self,
+            sketch_images,
+    ):
+        # @TODO: Need test.
+        return self.sketch_fusion_adapter(sketch_images)
 
     def prepare_latents(
         self,
@@ -229,6 +237,7 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
 
         return latents
 
+    # @TODO: append part about sketch fusion in inference function.
     @torch.no_grad()
     def decode_latents(
         self,
@@ -316,6 +325,7 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         image: PipelineImageInput,
         mask: PipelineImageInput,
         image_scene: PipelineImageInput,
+        sketch_image: PipelineImageInput,
         num_inference_steps: int = 50,
         timesteps: List[int] = None,
         guidance_scale: float = 7.0,
@@ -363,6 +373,8 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
             image_embeds_1 = torch.cat([negative_image_embeds_1, image_embeds_1], dim=0)
             image_embeds_2 = torch.cat([negative_image_embeds_2, image_embeds_2], dim=0)
 
+        sketch_latents = self.encode_sketch_latents(sketch_image)
+
         # 4. Prepare timesteps
         timesteps, num_inference_steps = retrieve_timesteps(
             self.scheduler, num_inference_steps, device, timesteps
@@ -405,6 +417,7 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
                     timestep,
                     encoder_hidden_states=image_embeds_1,
                     encoder_hidden_states_2=image_embeds_2,
+                    sketch_hidden_states=sketch_latents,
                     attention_kwargs=attention_kwargs,
                     return_dict=False,
                 )[0]
@@ -426,7 +439,7 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
                     if torch.backends.mps.is_available():
                         # some platforms (eg. apple mps) misbehave due to a pytorch bug: https://github.com/pytorch/pytorch/pull/99272
                         latents = latents.to(latents_dtype)
-
+                # @TODO: 这里没搞懂是啥意思，Image embeds每一个step都在变吗？
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
                     for k in callback_on_step_end_tensor_inputs:
@@ -492,6 +505,8 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         image_encoder_1_lora_config: Optional[Dict[str, Any]] = None,
         image_encoder_2_lora_config: Optional[Dict[str, Any]] = None,
     ):
+
+        # @TODO: Add adapter for sketch vision tower.
         # Modify feature extractor 2 if needed
         if pretrained_image_encoder_2_processor_config is not None:
             self.feature_extractor_2 = BitImageProcessor.from_dict(

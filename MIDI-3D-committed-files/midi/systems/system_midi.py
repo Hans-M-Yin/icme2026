@@ -27,6 +27,9 @@ from .model_utils import (
     to_pil_image,
 )
 
+from ..sketch.fusion_adapter import FusionAdapterConfig,SketchFusionAdapter
+from ..sketch.sketch_tower import SketchVisionTowerConfig,SketchVisionTower
+
 
 class MIDISystem(BaseSystem):
     @dataclass
@@ -39,6 +42,7 @@ class MIDISystem(BaseSystem):
         pretrained_image_encoder_2_processor_config: Optional[Dict[str, Any]] = None
         image_encoder_2_input_channels: int = 7
         image_encoder_2_init_projection_method: str = "clone"
+
 
         ## Attention processor
         set_self_attn_module_names: Optional[List[str]] = None
@@ -82,7 +86,9 @@ class MIDISystem(BaseSystem):
         self.train_image_encoder_2_lora = (
             self.cfg.image_encoder_2_lora_config is not None
         )
-
+        self.sketch_image_encoder_lora = (
+            # @TODO: Whether apply lora into sketch image encoder?
+        )
         # Prepare pre-trained pipeline
         pipeline: MIDIPipeline = MIDIPipeline.from_pretrained(
             self.cfg.pretrained_model_name_or_path
@@ -97,6 +103,7 @@ class MIDISystem(BaseSystem):
             self.cfg.transformer_lora_config,
             self.cfg.image_encoder_1_lora_config,
             self.cfg.image_encoder_2_lora_config,
+            # @TODO
         )
 
         noise_scheduler = RectifiedFlowScheduler.from_config(
@@ -114,6 +121,8 @@ class MIDISystem(BaseSystem):
         )
         self.image_encoder_2: Dinov2Model = self.pipeline.image_encoder_2
 
+        self.sketch_fusion_adapter : SketchFusionAdapter = self.pipeline.sketch_fusion_adapter
+
         self.vae.requires_grad_(False)
 
         # Others
@@ -127,6 +136,8 @@ class MIDISystem(BaseSystem):
                 self.image_encoder_1.gradient_checkpointing_enable()
             if self.train_image_encoder_2_lora:
                 self.image_encoder_2.gradient_checkpointing_enable()
+            # @TODO add lora for sketch vision tower
+
 
     def on_fit_start(self):
         pass
@@ -145,6 +156,7 @@ class MIDISystem(BaseSystem):
         noisy_latents: torch.Tensor,
         conditioning_pixel_values_one: torch.Tensor,
         conditioning_pixel_values_two: torch.Tensor,
+        conditioning_sketch_images: Union[torch.Tensor, List[PIL.Image.Image]],
         timesteps: torch.Tensor,
         num_instances: Union[torch.IntTensor, List[int]],
         num_instances_per_batch: int,
@@ -183,6 +195,11 @@ class MIDISystem(BaseSystem):
         image_2 = self.image_encoder_2(image_2).last_hidden_state
         image_2[image_drop_mask] = 0.0
 
+        # process sketch images and get latents
+        sketch_latents = self.sketch_fusion_adapter(sketch_images)
+        # [ISSUES]: add dropout experimentally. But should check shape firstly.
+        sketch_latents[image_drop_mask] = 0.0
+
         # Model prediction
         model_pred = self.transformer(
             noisy_latents,
@@ -193,6 +210,7 @@ class MIDISystem(BaseSystem):
                 "num_instances": num_instances,
                 "num_instances_per_batch": num_instances_per_batch,
             },
+            sketch_hidden_states=sketch_latents
         ).sample
 
         return {"model_pred": model_pred}
@@ -233,10 +251,14 @@ class MIDISystem(BaseSystem):
         conditioning_pixel_values_two = torch.cat(
             [batch["rgb"], batch["rgb_scene"], batch["mask"]], dim=1
         )
+        conditioning_sketch_images = batch['sketch']
+
+
         model_pred: Tensor = self(
             noisy_latents,
             conditioning_pixel_values_one,
             conditioning_pixel_values_two,
+            conditioning_sketch_images,
             timesteps,
             **batch,
         )["model_pred"]
@@ -329,6 +351,7 @@ class MIDISystem(BaseSystem):
             self.train_transformer_lora
             or self.train_image_encoder_1_lora
             or self.train_image_encoder_2_lora
+            # @TODO: add sketch vision tower lora
         ):
             save_dir = os.path.join(
                 os.path.dirname(self.get_save_dir()), "custom_adapter"
@@ -350,6 +373,7 @@ class MIDISystem(BaseSystem):
             image=to_pil_image(batch["rgb"]),
             mask=to_pil_image(batch["mask"]),
             image_scene=to_pil_image(batch["rgb_scene"]),
+            sketch_image=to_pil_image(batch["sketch"]),
             num_inference_steps=self.cfg.eval_num_inference_steps,
             guidance_scale=self.cfg.eval_guidance_scale,
             generator=torch.Generator(device=self.device).manual_seed(

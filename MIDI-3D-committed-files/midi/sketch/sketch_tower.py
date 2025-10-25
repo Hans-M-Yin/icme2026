@@ -6,7 +6,9 @@ from transformers import CLIPVisionModel, CLIPImageProcessor, CLIPVisionConfig, 
 import dataclasses
 import PIL
 import numpy as np
-
+from diffusers.configuration_utils import ConfigMixin
+from diffusers.models.modeling_utils import ModelMixin
+import os
 """
 Vision encoder to compress sketch's information into latents. 
 For vision tower backbone, here are candidates:
@@ -48,10 +50,9 @@ def resize_image(images: Union[List,np.array,Image], size: Tuple[int, int], smar
     return resize_result
 
 @dataclasses.dataclass
-class SketchVisionTowerConfig:
-    vision_tower_model: str
+class SketchVisionTowerConfig(ConfigMixin):
 
-    select_feature_type: str
+    select_feature_type: str = None
 
     arbitrary_input_size: bool = False
 
@@ -63,38 +64,101 @@ class SketchVisionTowerConfig:
 
     device: str = "cuda"
 
+    pretrained_model_name_or_path: str = None
+
+    model_type: str = "sketch_vision_tower"
 
 
 # @TODO: Need implementation for parallel training methods. model loaded from huggingface is simply on GPU:0. Although
 # @TODO: ViT is such a small module that it's not necessary for parallel, we should consider it's parallel to boost training
 # @TODO: and inference process.
-class SketchVisionTower(nn.Module):
+class SketchVisionTower(nn.Module, ModelMixin):
     def __init__(self, config: SketchVisionTowerConfig):
-        """
-        :param args: Configuration needed for building ViT tower.
-        :param delay_load: Whether to load the model with delay or not
-        """
-        # @TODO: initialize vision tower.
         super().__init__()
+
+        self.config = config
         self.vision_tower_model_name = config.vision_tower_model
         self.arbitrary_input_size = config.arbitrary_input_size
         self.input_size = config.input_size
         self.vision_tower = None
-        if "clip" in self.vision_tower_model_name:
-            self.vision_tower = CLIPVisionModel.from_pretrained(self.vision_tower_model_name).to(config.device)
-            self.model_config = self.vision_tower.config
-            print(f"Model already loaded.\n"
-                f"Model configs: {self.model_config}")
-        elif "dino" in self.vision_tower_model_name:
-            self.vision_tower = AutoModel.from_pretrained(self.vision_tower_model_name).to(config.device)
-            self.model_config = self.vision_tower.config
-            print(f"Model already loaded.\n"
-                f"Model configs: {self.model_config}")
+        self.preprocessor = None
+
         self.select_layer = config.select_layer
         self.select_feature_type = config.select_feature_type
         # [ISSUE]: I'm not sure whether all ViT models contain preprocessor. Preprocessor resize images into proper size needed for the vision tower.
         # Preprocessor accept different types of input. tensor / np.ndarray / Image
-        self.preprocessor = AutoProcessor.from_pretrained(self.vision_tower_model_name)
+        super().__init__()
+
+        # 1. 获取模型标识符（可能是本地路径或 Hub ID）
+        model_id_or_path = config.get("pretrained_model_name_or_path", None)
+
+        # 2. 定义回退的官方/默认模型 ID
+        # 假设这是你在找不到本地权重时希望使用的官方地址
+        DEFAULT_CLIP_ID = "openai/clip-vit-base-patch32"
+
+        load_path = model_id_or_path
+
+        # 3. 检查提供的路径/ID是否是有效的本地目录（包含权重文件）
+        # 如果是本地路径，我们检查它是否包含权重文件。
+        if model_id_or_path is not None:
+            is_local_path = os.path.isdir(model_id_or_path)
+
+        # 4. 确定最终的加载源
+            if is_local_path:
+                # 这是一个本地目录，我们检查它是否包含权重文件 (例如 pytorch_model.bin 或 model.safetensors)
+                has_weights = (
+                        os.path.exists(os.path.join(model_id_or_path, 'pytorch_model.bin')) or
+                        os.path.exists(os.path.join(model_id_or_path, 'model.safetensors'))
+                    # 也可以检查其他可能的权重文件名
+                )
+
+                if not has_weights:
+                    # 本地路径存在，但没有权重文件，回退到官方地址
+                    print(
+                        f"Local path '{model_id_or_path}' found but no weights. Falling back to official ID: {DEFAULT_CLIP_ID}")
+                    load_path = DEFAULT_CLIP_ID
+                # else: load_path 保持为 model_id_or_path
+
+            elif not is_local_path and "/" not in model_id_or_path:
+                # 既不是目录，又不是 Hub ID 格式 (例如 "my_model" 而不是 "user/my_model")
+                # 这种情况下，如果 from_pretrained 失败，也会回退
+                # 但更安全的方式是依赖 from_pretrained 的内部机制，
+                # 这里的 load_path 保持 model_id_or_path，如果 from_pretrained 失败，则打印错误
+                # 我们可以添加一个更严格的回退：
+                print(
+                    f"Model ID/Path '{model_id_or_path}' is not a directory or a standard HuggingFace Hub ID. Attempting to load, but may fallback.")
+        else:
+            load_path = DEFAULT_CLIP_ID
+            # 由于 CLIPVisionModel.from_pretrained 内部会处理 Hub ID，这里主要解决本地路径问题。
+
+        # 5. 加载 CLIP 模型
+        try:
+            # from_pretrained 能够处理本地路径和 Hub ID
+            self.vision_model = CLIPVisionModel.from_pretrained(load_path)
+            print(f"Successfully loaded CLIPVisionModel from: {load_path}")
+
+        except Exception as e:
+            # 6. 最终回退（如果 Hub 加载也失败了，例如网络问题或 ID 错误）
+            if load_path != DEFAULT_CLIP_ID:
+                print(
+                    f"Failed to load CLIPVisionModel from {load_path}. Attempting final fallback to default ID: {DEFAULT_CLIP_ID}. Error: {e}")
+
+                try:
+                    self.vision_model = CLIPVisionModel.from_pretrained(DEFAULT_CLIP_ID)
+                    print(f"Successfully loaded CLIPVisionModel from default official ID: {DEFAULT_CLIP_ID}")
+                except Exception as final_e:
+                    # 7. 如果最终回退也失败了，只能随机初始化结构
+                    print(
+                        f"FATAL: Failed to load CLIPVisionModel even from official source. Initializing with random weights. Error: {final_e}")
+                    config = CLIPVisionConfig.from_pretrained(DEFAULT_CLIP_ID)
+                    self.vision_model = CLIPVisionModel(config)
+
+            else:
+                # load_path 已经是 DEFAULT_CLIP_ID，但加载失败了，直接随机初始化
+                print(
+                    f"FATAL: Failed to load CLIPVisionModel from official source {DEFAULT_CLIP_ID}. Initializing with random weights. Error: {e}")
+                config = CLIPVisionConfig.from_pretrained(DEFAULT_CLIP_ID)
+                self.vision_model = CLIPVisionModel(config)
 
     def feature_select(self, image_forward_outs) -> List[torch.Tensor]:
         if self.select_layer == "all":
@@ -149,12 +213,6 @@ class SketchVisionTower(nn.Module):
     def device(self):
         return self.vision_tower.device
 
-    @property
-    def config(self):
-        if self.is_loaded:
-            return self.vision_tower.config
-        else:
-            return self.cfg_only
 
     @property
     def hidden_size(self):

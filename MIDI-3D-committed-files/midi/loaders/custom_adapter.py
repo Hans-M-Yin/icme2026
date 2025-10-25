@@ -14,6 +14,7 @@ class CustomAdapterMixin:
         self._init_custom_adapter(*args, **kwargs)
 
     def _init_custom_adapter(self, *args, **kwargs):
+        # 繼承了
         raise NotImplementedError
 
     def load_custom_adapter(

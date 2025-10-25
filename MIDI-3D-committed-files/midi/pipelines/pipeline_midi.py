@@ -114,7 +114,9 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         sketch_fusion_adapter: SketchFusionAdapter
     ):
         super().__init__()
-
+        """
+        For first time initialization, input sketch_fusion_adapter as a parameter of function "from_pretrained"
+        """
         self.register_modules(
             vae=vae,
             transformer=transformer,
@@ -504,6 +506,7 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         transformer_lora_config: Optional[Dict[str, Any]] = None,
         image_encoder_1_lora_config: Optional[Dict[str, Any]] = None,
         image_encoder_2_lora_config: Optional[Dict[str, Any]] = None,
+        sketch_vision_tower_lora_config: Optional[Dict[str, Any]] = None
     ):
 
         # @TODO: Add adapter for sketch vision tower.
@@ -581,6 +584,13 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         else:
             self.image_encoder_2.requires_grad_(False)
 
+        # @TODO: 这里需要注意，adapter里面的projector应该全参数训练。需要用loRA训练的应该是vision tower.
+        # @TODO: 所以我估计这里的lora_config要着重处理一下
+        if sketch_vision_tower_lora_config is not None:
+            self.sketch_vision_tower.add_adapter(LoraConfig(**sketch_vision_tower_lora_config))
+        else:
+            self.sketch_vision_tower.requires_grad_(False)
+
     def _load_custom_adapter(self, state_dict):
         parse_state_dict = lambda state_dict, prefix: {
             k.replace(prefix, ""): v
@@ -590,7 +600,7 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         transformer_state_dict = parse_state_dict(state_dict, "transformer.")
         image_encoder_1_state_dict = parse_state_dict(state_dict, "image_encoder_1.")
         image_encoder_2_state_dict = parse_state_dict(state_dict, "image_encoder_2.")
-
+        sketch_vision_tower_state_dict = parse_state_dict(state_dict, "sketch_vision_tower")
         if len(transformer_state_dict) > 0:
             self.transformer.load_state_dict(transformer_state_dict, strict=False)
         if len(image_encoder_1_state_dict) > 0:
@@ -600,6 +610,10 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         if len(image_encoder_2_state_dict) > 0:
             self.image_encoder_2.load_state_dict(
                 image_encoder_2_state_dict, strict=False
+            )
+        if len(sketch_vision_tower_state_dict) > 0:
+            self.sketch_vision_tower.load_state_dict(
+                sketch_vision_tower_state_dict, strict=False
             )
 
     def _save_custom_adapter(
@@ -631,10 +645,14 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         image_encoder_2_state_dict = parse_state_dict(
             self.image_encoder_2.state_dict(), "image_encoder_2."
         )
+        sketch_vision_tower_state_dict = parse_state_dict(
+            self.sketch_vision_tower.state_dict(), "sketch_vision_tower"
+        )
         state_dict = {
             **transformer_state_dict,
             **image_encoder_1_state_dict,
             **image_encoder_2_state_dict,
+            **sketch_vision_tower_state_dict
         }
 
         return state_dict

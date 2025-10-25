@@ -160,7 +160,7 @@ class DiTBlock(nn.Module):
             Whether to use normalization in QK calculation. Defaults to `True`.
     """
 
-    # @TODO:
+    # @TODO: __init__里面新的参数没初始化，dim等等。
     """
     这个DiT Block就是一层，他虽然注释里面写的是From Tencent Hunyuan，但是这个基本是自己写的，比如use_cross_attn1和use_cross_attn2等等。
     总的来说，这个DiT Block就有一定扩展性，可以通过传参数实现控制DiT Block的运作流程。

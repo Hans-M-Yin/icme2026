@@ -43,7 +43,10 @@ class MIDISystem(BaseSystem):
         image_encoder_2_input_channels: int = 7
         image_encoder_2_init_projection_method: str = "clone"
 
-
+        # Sketch Adapter
+        sketch_vision_tower_config : SketchVisionTowerConfig = None
+        sketch_fusion_adapter_config: Optional[FusionAdapterConfig] = None
+        training_sketch_module_from_scratch: bool = True
         ## Attention processor
         set_self_attn_module_names: Optional[List[str]] = None
 
@@ -52,6 +55,7 @@ class MIDISystem(BaseSystem):
         image_encoder_1_lora_config: Optional[Dict[str, Any]] = None
         image_encoder_2_lora_config: Optional[Dict[str, Any]] = None
 
+        sketch_vision_tower_lora_config: Optional[Dict[str, Any]] = None
         # Training
         image_drop_prob: float = 0.1
         new_cond_size: int = 512
@@ -75,6 +79,8 @@ class MIDISystem(BaseSystem):
 
     cfg: Config
 
+
+
     def configure(self):
         super().configure()
 
@@ -88,11 +94,25 @@ class MIDISystem(BaseSystem):
         )
         self.sketch_image_encoder_lora = (
             # @TODO: Whether apply lora into sketch image encoder?
+            self.cfg.sketch_image_tower_lora_config is not None
         )
-        # Prepare pre-trained pipeline
-        pipeline: MIDIPipeline = MIDIPipeline.from_pretrained(
-            self.cfg.pretrained_model_name_or_path
-        )
+
+        if self.cfg.training_sketch_module_from_scratch is not None:
+            # load this module from scratch
+            transformer = TripoSGDiTModel.from_pretrained(os.path.join(self.cfg.pretrained_model_name_or_path, "./transformer"), strict=False,
+                                                          ignore_mismatched_sizes=True)
+            sketch_fusion_adapter = SketchFusionAdapter(self.cfg.sketch_fusion_adapter_config, self.cfg.sketch_vision_tower_config)
+            pipeline: MIDIPipeline = MIDIPipeline.from_pretrained(
+                self.cfg.pretrained_model_name_or_path,
+                tranformer=transformer,
+                sketch_fusion_adapter=sketch_fusion_adapter
+            )
+        else:
+
+            # Prepare pre-trained pipeline
+            pipeline: MIDIPipeline = MIDIPipeline.from_pretrained(
+                self.cfg.pretrained_model_name_or_path
+            )
 
         # Initialize custom adapter: adapted Dinov2 and attn_processor
         pipeline.init_custom_adapter(
@@ -104,6 +124,7 @@ class MIDISystem(BaseSystem):
             self.cfg.image_encoder_1_lora_config,
             self.cfg.image_encoder_2_lora_config,
             # @TODO
+            self.cfg.sketch_vision_tower_lora_config
         )
 
         noise_scheduler = RectifiedFlowScheduler.from_config(

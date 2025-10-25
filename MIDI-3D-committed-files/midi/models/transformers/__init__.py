@@ -26,7 +26,7 @@ def set_transformer_attn_processor(
         if module_names is not None
         else True
     )  # prefix match
-
+    # @TODO: 这一块在干啥？没搞懂。
     attn_procs = {}
     for name, attn_processor in transformer.attn_processors.items():
         hidden_size = transformer.config.width

@@ -26,10 +26,14 @@ And the new attention method are novelty we need.
 模型用AttentionProcessor对两个序列计算Q和KV，并结算Attention结果。上面的brain storm只是化简了Attention计算过程。
 """
 import dataclasses
+import os
 from typing import List, Tuple, Union
 import torch.nn as nn
 from .sketch_tower import SketchVisionTower, SketchVisionTowerConfig
+from diffusers.models.modeling_utils import ModelMixin
 import torch
+from diffusers.configuration_utils import ConfigMixin
+from diffusers.models.modeling_utils import ModelMixin
 import torch.nn.functional as F
 # @TODO: Use projector or not is not determined. For implementation, the difference between using projectors or not is
 # @TODO: minor, we only need to consider dimensions. In MIDI's implementation, it seems that the cross attention module
@@ -38,12 +42,12 @@ import torch.nn.functional as F
 # @TODO: We need implement something about **device setting**.
 
 @dataclasses.dataclass
-class FusionAdapterConfig:
+class FusionAdapterConfig(ConfigMixin):
 
-    num_dit_layers: int
-    num_vision_layers: int
-    dim_dit_latent: int
-    dim_vision_latent: int
+    num_dit_layers: int = None
+    num_vision_layers: int = None
+    dim_dit_latent: int = None
+    dim_vision_latent: int = None
 
     # Fusion method
     fusion_mode: str = "specific"
@@ -66,15 +70,20 @@ class FusionAdapterConfig:
 
     dim_projected_latent: int = 512
 
+    model_type: str = "sketch_vision_tower"
 
 
-class SketchFusionAdapter(nn.Module):
+
+from diffusers.loaders import PeftAdapterMixin
+
+
+class SketchFusionAdapter(nn.Module, ModelMixin, PeftAdapterMixin):
     """
     FusionAdapter collects layer-wise image latents and decide which layer does each of them will be fused to. This is
     because SketchVisionTower layer num (CLIP is 15) is not equal to DiT layer num. So layer by layer is not available.
     Manually order specific layers to fuse is the simplest way.
     """
-    def __init__(self, config: FusionAdapterConfig, sketch_tower_config: SketchVisionTowerConfig):
+    def __init__(self, config: FusionAdapterConfig, sketch_tower_config: SketchVisionTowerConfig, **kwargs):
 
         super(SketchFusionAdapter, self).__init__()
         self.config = config
@@ -101,6 +110,81 @@ class SketchFusionAdapter(nn.Module):
         """
         self.sketch_tower = SketchVisionTower(sketch_tower_config)
 
+    @classmethod
+    def from_pretrained(
+            cls,
+            pretrained_model_name_or_path: Union[str, os.PathLike],
+            **kwargs
+    ):
+        # 先看看有没有已有权重。
+        try:
+            config, kwargs = cls.load_config(pretrained_model_name_or_path, **kwargs)
+
+            if not isinstance(config, FusionAdapterConfig):
+                config = FusionAdapterConfig.from_dict(config)
+
+            # 尝试从配置或 kwargs 中获取 SketchVisionTowerConfig
+            sketch_tower_config = kwargs.pop("sketch_tower_config", None)
+            if sketch_tower_config is None and hasattr(config, "sketch_tower_config") and config.sketch_tower_config:
+                sketch_tower_config = SketchVisionTowerConfig.from_dict(config.sketch_tower_config)
+
+            is_config_loaded = True
+
+        except Exception as e:
+            # 🚨 配置加载失败！这是你需要手动初始化的场景。
+            print(f"Failed to load FusionAdapter config from {pretrained_model_name_or_path}. Error: {e}")
+            print("Attempting to initialize model using provided/default configuration.")
+
+            is_config_loaded = False
+
+            # 2. 手动初始化：从 kwargs 或默认值获取配置
+
+            # 从 kwargs 中获取 FusionAdapterConfig 的参数，并创建 config
+            sketch_fusion_adapter_config = kwargs.pop("sketch_fusion_adapter_config", None)
+            if sketch_fusion_adapter_config is None:
+
+                config_data = {k: kwargs.pop(k) for k in list(kwargs.keys()) if
+                               k in FusionAdapterConfig.__dataclass_fields__}
+                config = FusionAdapterConfig(**config_data)
+            else:
+                if isinstance(sketch_fusion_adapter_config, dict):
+                    config = FusionAdapterConfig.from_dict(sketch_fusion_adapter_config)
+                else:
+                    assert isinstance(sketch_fusion_adapter_config, SketchVisionTowerConfig), "Invalid sketch_fusion_adapter_config."
+                    config = sketch_fusion_adapter_config
+            sketch_tower_config = kwargs.pop("sketch_tower_config", None)
+            if sketch_tower_config is None:
+                raise ValueError("No SketchVisionTowerConfig is provided for initializing FusionAdapter.")
+            if isinstance(sketch_tower_config, dict):
+                sketch_tower_config = SketchVisionTowerConfig.from_dict(sketch_tower_config)
+        model = cls(config=config, sketch_tower_config=sketch_tower_config, **kwargs)
+
+        # 加载权重 (只有在成功加载配置时才尝试加载权重)。上一行先对SketchFusionAdapter做了默认初始化，即各个参数已经被随机初始化了，假如pretrained path里面有权重
+        # 则将随机初始化的参数替换为训练的结果。
+        if is_config_loaded:
+            try:
+                # 尝试加载完整的 state_dict
+                # 注意：load_state_dict 是一个类方法，用于将文件内容读取到字典中
+                state_dict = cls.load_state_dict(pretrained_model_name_or_path)
+
+                # 加载权重到实例化的模型中
+                missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+
+                # Projector 权重的控制：Projector 权重如果缺失，会被报告在 missing_keys 中，但会保持随机初始化
+                print(
+                    f"Missing keys (Projectors or others): {missing_keys}. These modules will be initialized randomly.")
+                print(f"Unexpected keys: {unexpected_keys}.")
+
+            except Exception as e:
+                print(
+                    f"Error loading state dict from {pretrained_model_name_or_path}: {e}. Model will keep its current initialization.")
+                pass
+
+        else:
+            # 如果配置加载失败，默认也不尝试加载权重，模型保持随机初始化
+            print("Model initialized from scratch with default/provided configs. No weights loaded.")
+
+        return model
     def create_projector(self, projector_type: str, input_dim, output_dim, hidden_dim: int = None) -> nn.Module:
         """
         Create a projector based on condition.
@@ -164,7 +248,6 @@ class SketchFusionAdapter(nn.Module):
         selected_latents = valina_latents[self.vision_layer_seqs]
         selected_projected_latents = [self.projectors[i](selected_latents[i]) for i in range(len(selected_latents))]
         return selected_projected_latents
-        
 
 
 

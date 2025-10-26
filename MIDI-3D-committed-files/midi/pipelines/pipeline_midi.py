@@ -22,7 +22,7 @@ from transformers import (
 
 from ..inference_utils import generate_dense_grid_points
 from ..loaders import CustomAdapterMixin
-from ..models.attention_processor import MIAttnProcessor2_0
+from ..models.attention_processor import MIAttnProcessor2_0, SketchFusionAttnProcessor
 from ..models.autoencoders import TripoSGVAEModel
 from ..models.transformers import TripoSGDiTModel, set_transformer_attn_processor
 from .pipeline_triposg_output import TripoSGPipelineOutput
@@ -497,7 +497,9 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
     def _init_custom_adapter(
         self,
         # Attention processor
+        # @TODO :Note this variable
         set_self_attn_module_names: Optional[List[str]] = None,
+        set_sketch_attn_module_names: Optional[List[str]] = None,
         # Image encoder 2
         pretrained_image_encoder_2_processor_config: Optional[Dict[str, Any]] = None,
         image_encoder_2_input_channels: int = 7,
@@ -563,11 +565,18 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
             set_self_attn_proc_func=func_default,
             set_cross_attn_1_proc_func=func_default,
             set_cross_attn_2_proc_func=func_default,
+            set_sketch_attn_proc_func=func_default
         )
         set_transformer_attn_processor(
             self.transformer,
             set_self_attn_proc_func=lambda name, hs, cad, ap: MIAttnProcessor2_0(),
             set_self_attn_module_names=set_self_attn_module_names,
+        )
+
+        set_transformer_attn_processor(
+            self.transformer,
+            set_self_attn_proc_func=lambda name, hs, cad, ap: SketchFusionAttnProcessor(),
+            set_sketch_attn_module_names=set_sketch_attn_module_names,
         )
 
         # LoRA

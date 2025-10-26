@@ -209,8 +209,8 @@ class DiTBlock(nn.Module):
         qk_norm: bool = True,
         qkv_bias: bool = True,
 
-        use_sketch_attention: bool = False,
-        sketch_attention_dim: Optional[int] = None
+        use_sketch_attention: bool = True,
+        sketch_attention_dim: Optional[int] = 768 # Should equal to projected latent dim.
 
     ):
         # @TODO: 这里初始化现在多需要什么参数？
@@ -238,6 +238,14 @@ class DiTBlock(nn.Module):
             else:
                 raise NotImplementedError
 
+
+            """
+            When initialize attention blocks, all blocks use default processors. The processor will be replaced in pipeline_midi.
+            TripoSGAttnProcessor2_0 exactly provide a standard attention processor. This processor as well as MIAttentionProcessor can play role of both
+            self attention and cross attention. The self attention block (attn1) will be replaced with a new MIAttentionProcessor for enabling 
+            multi-instance calculation. Rest attention (cross1,cross2) remain unchanged. I change attn_sketch prcoessor into SketchFusionAttention in
+            pipeline_midi. However, currently SketchFusionAttention is just standard attention. We need to modify it. 
+            """
             self.attn_sketch = Attention(
                 query_dim=dim,
                 cross_attention_dim=sketch_attention_dim,
@@ -246,7 +254,7 @@ class DiTBlock(nn.Module):
                 qk_norm="rms_norm" if qk_norm else None,
                 eps=1e-6,
                 bias=qkv_bias,
-                processor=SketchFusionAttnProcessor(),
+                processor=TripoSGAttnProcessor2_0(),
             )
 
         # 1. Self-Attn
@@ -348,6 +356,7 @@ class DiTBlock(nn.Module):
     ) -> torch.Tensor:
         # @TODO: 最显然的，现在除了encoder_hidden_states和encoder_hidden_states2，还需要一组草图的features，注意这里的DiTBlock假如
         # @TODO: 是第i层，那么这里输入应该提供第i层草图的latent。然后连同DiT输出的logits一起输入到融合的模块，得到结果。
+        # @TODO: 没有看到Multi-instance attention啊
 
         # Prepare attention kwargs
         attention_kwargs = attention_kwargs or {}

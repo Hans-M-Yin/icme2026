@@ -77,7 +77,7 @@ class FusionAdapterConfig(ConfigMixin):
 from diffusers.loaders import PeftAdapterMixin
 
 
-class SketchFusionAdapter(nn.Module, ModelMixin, PeftAdapterMixin):
+class SketchFusionAdapter(ModelMixin, nn.Module, PeftAdapterMixin):
     """
     FusionAdapter collects layer-wise image latents and decide which layer does each of them will be fused to. This is
     because SketchVisionTower layer num (CLIP is 15) is not equal to DiT layer num. So layer by layer is not available.
@@ -244,9 +244,21 @@ class SketchFusionAdapter(nn.Module, ModelMixin, PeftAdapterMixin):
         :return: projected latent sequences used for DiT fusion
         """
         # valina_latents: List[torch.tensor] [[B, L, H]], each element is one layer's latent.
+        print(self.sketch_tower.vision_tower)
         valina_latents = self.sketch_tower(images)
-        selected_latents = valina_latents[self.vision_layer_seqs]
-        selected_projected_latents = [self.projectors[i](selected_latents[i]) for i in range(len(selected_latents))]
+        # print(self.vision_layer_seqs)
+        # print(valina_latents.shape)
+
+        # selected_latents = [valina_latents[i] for i in self.vision_layer_seqs]
+        # @TODO: Need Fix. selected_full_latent should be a list has the same length with DiT architecture.
+        selected_full_latent = [None] * 21
+        for i in range(len(self.dit_layer_seqs)):
+            selected_full_latent[self.dit_layer_seqs[i]] = valina_latents[self.vision_layer_seqs[i]]
+        # if self.enable_projector:
+        #     # @TODO: Need fix.
+        #     selected_projected_latents = [self.projectors[i](selected_latents[i]) for i in range(len(selected_latents))]
+        else:
+            selected_projected_latents = selected_full_latent
         return selected_projected_latents
 
 

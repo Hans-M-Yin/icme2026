@@ -17,9 +17,11 @@ def set_transformer_attn_processor(
     set_self_attn_proc_func: Callable = default_set_attn_proc_func,
     set_cross_attn_1_proc_func: Callable = default_set_attn_proc_func,
     set_cross_attn_2_proc_func: Callable = default_set_attn_proc_func,
+    set_sketch_attn_proc_func: Callable = default_set_attn_proc_func,
     set_self_attn_module_names: Optional[list[str]] = None,
     set_cross_attn_1_module_names: Optional[list[str]] = None,
     set_cross_attn_2_module_names: Optional[list[str]] = None,
+    set_sketch_attn_module_names: Optional[list[str]] = None
 ) -> None:
     do_set_processor = lambda name, module_names: (
         any([name.startswith(module_name) for module_name in module_names])
@@ -55,6 +57,16 @@ def set_transformer_attn_processor(
                     name, hidden_size, cross_attention_dim, attn_processor
                 )
                 if do_set_processor(name, set_cross_attn_2_module_names)
+                else attn_processor
+            )
+
+        elif name.endswith("attn_sketch.processor"):
+            cross_attention_dim = transformer.config.sketch_attention_dim
+            attn_procs[name] = (
+                set_sketch_attn_proc_func(
+                    name, hidden_size, cross_attention_dim, attn_processor
+                )
+                if do_set_processor(name, set_sketch_attn_module_names)
                 else attn_processor
             )
 

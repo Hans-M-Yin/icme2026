@@ -209,8 +209,8 @@ class DiTBlock(nn.Module):
         qk_norm: bool = True,
         qkv_bias: bool = True,
 
-        use_sketch_attention: bool = False,
-        sketch_attention_dim: Optional[int] = None
+        use_sketch_attention: bool = True,
+        sketch_attention_dim: Optional[int] = 768 # Should equal to projected latent dim.
 
     ):
         # @TODO: 这里初始化现在多需要什么参数？
@@ -238,6 +238,15 @@ class DiTBlock(nn.Module):
             else:
                 raise NotImplementedError
 
+
+            """
+            When initialize attention blocks, all blocks use default processors. The processor will be replaced in pipeline_midi.
+            TripoSGAttnProcessor2_0 exactly provide a standard attention processor. This processor as well as MIAttentionProcessor can play role of both
+            self attention and cross attention. The self attention block (attn1) will be replaced with a new MIAttentionProcessor for enabling 
+            multi-instance calculation. Rest attention (cross1,cross2) remain unchanged. I change attn_sketch prcoessor into SketchFusionAttention in
+            pipeline_midi. However, currently SketchFusionAttention is just standard attention. We need to modify it. 
+            """
+            print(f"dim:{dim} | sketch_attention_dim: {sketch_attention_dim} | dim_head: {dim // num_attention_heads}")
             self.attn_sketch = Attention(
                 query_dim=dim,
                 cross_attention_dim=sketch_attention_dim,
@@ -246,7 +255,7 @@ class DiTBlock(nn.Module):
                 qk_norm="rms_norm" if qk_norm else None,
                 eps=1e-6,
                 bias=qkv_bias,
-                processor=SketchFusionAttnProcessor(),
+                processor=TripoSGAttnProcessor2_0(),
             )
 
         # 1. Self-Attn
@@ -340,7 +349,7 @@ class DiTBlock(nn.Module):
         hidden_states: torch.Tensor,
         encoder_hidden_states: Optional[torch.Tensor] = None,
         encoder_hidden_states_2: Optional[torch.Tensor] = None,
-        sketch_encoder_hidden_states: Optional[torch.Tensor] = None,
+        sketch_hidden_states: Optional[torch.Tensor] = None,
         temb: Optional[torch.Tensor] = None,
         image_rotary_emb: Optional[torch.Tensor] = None,
         skip: Optional[torch.Tensor] = None,
@@ -348,7 +357,8 @@ class DiTBlock(nn.Module):
     ) -> torch.Tensor:
         # @TODO: 最显然的，现在除了encoder_hidden_states和encoder_hidden_states2，还需要一组草图的features，注意这里的DiTBlock假如
         # @TODO: 是第i层，那么这里输入应该提供第i层草图的latent。然后连同DiT输出的logits一起输入到融合的模块，得到结果。
-
+        # @TODO: 没有看到Multi-instance attention啊
+        # print("一姐一姐艾拉无忧")
         # Prepare attention kwargs
         attention_kwargs = attention_kwargs or {}
 
@@ -401,6 +411,7 @@ class DiTBlock(nn.Module):
                     )
                 )
             else:
+
                 hidden_states = hidden_states + self.attn2(
                     self.norm2(hidden_states),
                     encoder_hidden_states=encoder_hidden_states,
@@ -408,12 +419,15 @@ class DiTBlock(nn.Module):
                     **attention_kwargs,
                 )
             if self.use_sketch_attention:
-                hidden_states = hidden_states + self.attn_sketch(
-                    self.norm_sketch(hidden_states),
-                    encoder_hidden_states=sketch_encoder_hidden_states,
-                    image_rotary_emb=image_rotary_emb,
-                    **attention_kwargs,
-                )
+                if sketch_hidden_states is not None:
+                    xxx = self.attn_sketch(
+                        self.norm_sketch(hidden_states),
+                        encoder_hidden_states=sketch_hidden_states,
+                        image_rotary_emb=image_rotary_emb,
+                        **attention_kwargs,
+                    )
+                    print(f'TYPE: {type(self.attn_sketch.processor)} ',hidden_states.shape, ' | ',xxx.shape, " | ",sketch_hidden_states.shape)
+                    hidden_states = hidden_states + xxx
 
         # FFN Layer ### TODO: switch norm2 and norm3 in the state dict
         mlp_inputs = self.norm3(hidden_states)

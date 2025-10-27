@@ -533,7 +533,7 @@ class SketchFusionAttnProcessor:
             encoder_hidden_states = attn.norm_encoder_hidden_states(
                 encoder_hidden_states
             )
-
+        print(f"这不科学:{encoder_hidden_states.shape}")
         key = attn.to_k(encoder_hidden_states)
         value = attn.to_v(encoder_hidden_states)
 

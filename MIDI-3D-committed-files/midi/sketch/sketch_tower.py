@@ -72,12 +72,11 @@ class SketchVisionTowerConfig(ConfigMixin):
 # @TODO: Need implementation for parallel training methods. model loaded from huggingface is simply on GPU:0. Although
 # @TODO: ViT is such a small module that it's not necessary for parallel, we should consider it's parallel to boost training
 # @TODO: and inference process.
-class SketchVisionTower(nn.Module, ModelMixin):
+class SketchVisionTower(ModelMixin, nn.Module):
     def __init__(self, config: SketchVisionTowerConfig):
         super().__init__()
 
         self.config = config
-        self.vision_tower_model_name = config.vision_tower_model
         self.arbitrary_input_size = config.arbitrary_input_size
         self.input_size = config.input_size
         self.vision_tower = None
@@ -89,11 +88,8 @@ class SketchVisionTower(nn.Module, ModelMixin):
         # Preprocessor accept different types of input. tensor / np.ndarray / Image
         super().__init__()
 
-        # 1. 获取模型标识符（可能是本地路径或 Hub ID）
-        model_id_or_path = config.get("pretrained_model_name_or_path", None)
+        model_id_or_path = getattr(config,"pretrained_model_name_or_path", None)
 
-        # 2. 定义回退的官方/默认模型 ID
-        # 假设这是你在找不到本地权重时希望使用的官方地址
         DEFAULT_CLIP_ID = "openai/clip-vit-base-patch32"
 
         load_path = model_id_or_path
@@ -134,7 +130,8 @@ class SketchVisionTower(nn.Module, ModelMixin):
         # 5. 加载 CLIP 模型
         try:
             # from_pretrained 能够处理本地路径和 Hub ID
-            self.vision_model = CLIPVisionModel.from_pretrained(load_path)
+            self.preprocessor = AutoProcessor.from_pretrained(load_path)
+            self.vision_tower = CLIPVisionModel.from_pretrained(load_path)
             print(f"Successfully loaded CLIPVisionModel from: {load_path}")
 
         except Exception as e:
@@ -144,21 +141,27 @@ class SketchVisionTower(nn.Module, ModelMixin):
                     f"Failed to load CLIPVisionModel from {load_path}. Attempting final fallback to default ID: {DEFAULT_CLIP_ID}. Error: {e}")
 
                 try:
-                    self.vision_model = CLIPVisionModel.from_pretrained(DEFAULT_CLIP_ID)
+                    self.preprocessor = AutoProcessor.from_pretrained(load_path)
+
+                    self.vision_tower = CLIPVisionModel.from_pretrained(DEFAULT_CLIP_ID)
                     print(f"Successfully loaded CLIPVisionModel from default official ID: {DEFAULT_CLIP_ID}")
                 except Exception as final_e:
                     # 7. 如果最终回退也失败了，只能随机初始化结构
                     print(
                         f"FATAL: Failed to load CLIPVisionModel even from official source. Initializing with random weights. Error: {final_e}")
                     config = CLIPVisionConfig.from_pretrained(DEFAULT_CLIP_ID)
-                    self.vision_model = CLIPVisionModel(config)
+                    self.preprocessor = AutoProcessor.from_pretrained(load_path)
+
+                    self.vision_tower = CLIPVisionModel(config)
 
             else:
                 # load_path 已经是 DEFAULT_CLIP_ID，但加载失败了，直接随机初始化
                 print(
                     f"FATAL: Failed to load CLIPVisionModel from official source {DEFAULT_CLIP_ID}. Initializing with random weights. Error: {e}")
                 config = CLIPVisionConfig.from_pretrained(DEFAULT_CLIP_ID)
-                self.vision_model = CLIPVisionModel(config)
+                self.preprocessor = AutoProcessor.from_pretrained(load_path)
+
+                self.vision_tower = CLIPVisionModel(config)
 
     def feature_select(self, image_forward_outs) -> List[torch.Tensor]:
         if self.select_layer == "all":

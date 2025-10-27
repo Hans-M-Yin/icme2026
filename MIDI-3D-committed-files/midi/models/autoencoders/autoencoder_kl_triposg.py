@@ -35,12 +35,15 @@ class TripoSGEncoder(nn.Module):
         self.proj_in = nn.Linear(in_channels, dim, bias=True)
 
         self.blocks = nn.ModuleList(
+            # @TODO: Need fix. VAE DiTBlock need remove sketch encoder.
             [
                 DiTBlock(
                     dim=dim,
                     num_attention_heads=num_attention_heads,
                     use_self_attention=False,
                     use_cross_attention=True,
+                    use_sketch_attention=False,
+
                     cross_attention_dim=dim,
                     cross_attention_norm_type="layer_norm",
                     activation_fn="gelu",
@@ -58,6 +61,8 @@ class TripoSGEncoder(nn.Module):
                     self_attention_norm_type="fp32_layer_norm",
                     use_cross_attention=False,
                     use_cross_attention_2=False,
+                    use_sketch_attention=False,
+
                     activation_fn="gelu",
                     norm_type="fp32_layer_norm",
                     norm_eps=1e-5,
@@ -114,6 +119,8 @@ class TripoSGDecoder(nn.Module):
                     self_attention_norm_type="fp32_layer_norm",
                     use_cross_attention=False,
                     use_cross_attention_2=False,
+                    use_sketch_attention=False,
+
                     activation_fn="gelu",
                     norm_type="fp32_layer_norm",
                     norm_eps=1e-5,
@@ -128,6 +135,8 @@ class TripoSGDecoder(nn.Module):
                     num_attention_heads=num_attention_heads,
                     use_self_attention=False,
                     use_cross_attention=True,
+                    use_sketch_attention=False,
+
                     cross_attention_dim=dim,
                     cross_attention_norm_type="layer_norm",
                     activation_fn="gelu",

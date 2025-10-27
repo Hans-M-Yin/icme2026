@@ -117,6 +117,9 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         """
         For first time initialization, input sketch_fusion_adapter as a parameter of function "from_pretrained"
         """
+        # for name, param in transformer.named_parameters():
+        #     print('SECOND',name, '| ', param.device)
+
         self.register_modules(
             vae=vae,
             transformer=transformer,
@@ -212,6 +215,7 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
             sketch_images,
     ):
         # @TODO: Need test.
+        print(type(self.sketch_fusion_adapter))
         return self.sketch_fusion_adapter(sketch_images)
 
     def prepare_latents(
@@ -226,8 +230,8 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
     ):
         if latents is not None:
             return latents.to(device=device, dtype=dtype)
-
         shape = (batch_size, num_tokens, num_channels_latents)
+        print(f"###shape:{shape}")
 
         if isinstance(generator, list) and len(generator) != batch_size:
             raise ValueError(
@@ -345,7 +349,6 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
     ):
         # 1. Check inputs. Raise error if not correct
         # TODO
-
         self._decode_progressive = decode_progressive
         self._guidance_scale = guidance_scale
         self._attention_kwargs = attention_kwargs
@@ -375,7 +378,7 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
             image_embeds_1 = torch.cat([negative_image_embeds_1, image_embeds_1], dim=0)
             image_embeds_2 = torch.cat([negative_image_embeds_2, image_embeds_2], dim=0)
 
-        sketch_latents = self.encode_sketch_latents(sketch_image)
+        sketch_latents = self.get_sketch_fusion_latent(sketch_image)
 
         # 4. Prepare timesteps
         timesteps, num_inference_steps = retrieve_timesteps(
@@ -575,7 +578,7 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
 
         set_transformer_attn_processor(
             self.transformer,
-            set_self_attn_proc_func=lambda name, hs, cad, ap: SketchFusionAttnProcessor(),
+            set_sketch_attn_proc_func=lambda name, hs, cad, ap: SketchFusionAttnProcessor(),
             set_sketch_attn_module_names=set_sketch_attn_module_names,
         )
 
@@ -596,9 +599,9 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         # @TODO: 这里需要注意，adapter里面的projector应该全参数训练。需要用loRA训练的应该是vision tower.
         # @TODO: 所以我估计这里的lora_config要着重处理一下
         if sketch_vision_tower_lora_config is not None:
-            self.sketch_vision_tower.add_adapter(LoraConfig(**sketch_vision_tower_lora_config))
+            self.sketch_fusion_adapter.sketch_tower.add_adapter(LoraConfig(**sketch_vision_tower_lora_config))
         else:
-            self.sketch_vision_tower.requires_grad_(False)
+            self.sketch_fusion_adapter.sketch_tower.requires_grad_(False)
 
     def _load_custom_adapter(self, state_dict):
         parse_state_dict = lambda state_dict, prefix: {

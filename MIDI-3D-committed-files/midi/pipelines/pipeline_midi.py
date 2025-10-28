@@ -347,6 +347,7 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         output_type: Optional[str] = "mesh_vf",
         return_dict: bool = True,
     ):
+        # print(f"############ {}")
         # 1. Check inputs. Raise error if not correct
         # TODO
         self._decode_progressive = decode_progressive
@@ -378,6 +379,7 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
             image_embeds_1 = torch.cat([negative_image_embeds_1, image_embeds_1], dim=0)
             image_embeds_2 = torch.cat([negative_image_embeds_2, image_embeds_2], dim=0)
 
+        print(f"SHAPE1 : {image_embeds_1.shape} | SHAPE2 : {image_embeds_2.shape}")
         sketch_latents = self.get_sketch_fusion_latent(sketch_image)
 
         # 4. Prepare timesteps

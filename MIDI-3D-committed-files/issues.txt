@@ -1,0 +1,5 @@
+已知问题：
+
+transformer使用sketch latent的时候，可能没有考虑batch。
+
+草图还需要调一下，有的时候草图会漏线条。

@@ -149,6 +149,109 @@ def prepare_sketch_images(
         return None
     return sketch_image_list
 
+"""
+Spatial Gating Attention may not work. But we still need to try.
+"""
+
+
+def get_single_sketch_gating_map(
+        sketch_image: Image.Image,
+        patch_size: int = 32,
+        threshold: float = 0.4,
+        device: str = "cuda"
+) -> torch.Tensor:
+    """
+    calculate single gating map.
+    :return:  Tensor [patch_size, patch_size]
+    """
+    # 1. 预处理：PIL -> 灰度 -> 归一化 Tensor
+
+    # 转换为灰度图 (L 模式)，确保通道为 1
+    sketch_gray = sketch_image.convert('L')
+
+    # 转为 NumPy 数组 (H, W)，并归一化到 0.0 ~ 1.0
+    sketch_np = np.array(sketch_gray).astype(np.float32) / 255.0
+
+    # 转为 PyTorch Tensor (1, H, W)，并移到 GPU (如果可用)
+    sketch_tensor = torch.from_numpy(sketch_np).unsqueeze(0).unsqueeze(0).to(
+        'cuda' if torch.cuda.is_available() else 'cpu'
+    )
+    # 形状: (1, 1, H, W)
+
+    # 2. 图像调整大小以适应分块 (可选但推荐)
+    # 如果图像大小不是 patch_size 的整数倍，应先调整大小或裁剪。
+    H, W = sketch_tensor.shape[2], sketch_tensor.shape[3]
+
+    target_H = (H // patch_size) * patch_size
+    target_W = (W // patch_size) * patch_size
+    if target_H != H or target_W != W:
+        sketch_tensor = sketch_tensor[:, :, :target_H, :target_W]
+    with torch.no_grad():
+        max_pooled_tensor = torch.nn.functional.max_pool2d(
+            sketch_tensor,
+            kernel_size=patch_size,
+            stride=patch_size
+        )
+    # 形状: (1, 1, P_num_H, P_num_W)
+    patch_map = (max_pooled_tensor >= threshold).float()
+
+    # 6. 最终形状调整
+    # 将形状从 (1, 1, P_num_H, P_num_W) 调整为 (P_num_H, P_num_W)
+    # print(f"SHAPE {patch_map.squeeze().shape}")
+    return patch_map.squeeze().to(device)
+
+def get_sketch_spatial_gating_map(
+        sketch_image_per_instance: List[List[Image.Image]],
+        patch_size:int,
+        device:str = "cuda",
+        concat:bool = False
+) -> Union[torch.Tensor,List[torch.Tensor]]:
+    """
+    Test done.
+    计算Gating map，即哪些patch有线条，哪些没线条。
+    Calculate spatial gating map. We firstly try the simplest way: the patches containing lines are 1, others are 0.
+    :param sketch_image_per_instance: A batch of sketch images. [[instance_A_sketch, instance_B_sketch, instance_C_sketch],[instance_A_sketch, instance_B_sketch, instance_C_sketch]]
+    :param patch_size: must be consistent with the sketch vision tower's patch size
+    :param concat: 是否把gating map合成为一个大的tensor，如果False，则返回的是List[Tensor]，每一个元素是一个场景的，形状为[I * H * W], H和W分别表示行数和列数。
+    """
+    res = []
+    for sketch_image_this_scene_list in sketch_image_per_instance:
+        gating_map_this_scene = [get_single_sketch_gating_map(i, patch_size, device=device) for i in sketch_image_this_scene_list]
+        res.append(torch.stack(gating_map_this_scene))
+    if concat:
+        res = torch.stack(res)
+    return res
+
+
+def visualize_patch_map_on_image(
+        original_image: Image.Image,
+        patch_map: torch.Tensor,
+        opacity: float = 0.5,
+):
+    """
+        tool function. 用来可视化gating map效果，这个可以忽略。
+    """
+    W, H = original_image.size
+
+    if patch_map.is_cuda:
+        patch_map = patch_map.cpu()
+
+    patch_map = patch_map.float()
+    patch_tensor = patch_map.unsqueeze(0).unsqueeze(0)
+    with torch.no_grad():
+        # print(patch_tensor.shape)
+        upsampled_mask = torch.nn.functional.interpolate(
+            patch_tensor, size=(H, W), mode='nearest'
+        ).squeeze()
+    alpha_value_opaque = int(255 * opacity)
+    rgb_channels = np.ones((H, W, 3), dtype=np.uint8) * 255
+    alpha_channel = (upsampled_mask.numpy() * alpha_value_opaque).astype(np.uint8)
+    alpha_3d = alpha_channel[:, :, np.newaxis]
+    overlay_array = np.concatenate([rgb_channels, alpha_3d], axis=2)
+    overlay_image = Image.fromarray(overlay_array, mode='RGBA')
+    base_image_rgba = original_image.convert("RGBA")
+    final_image = Image.alpha_composite(base_image_rgba, overlay_image)
+    final_image.show()
 
 
 if __name__ == "__main__":
@@ -165,5 +268,12 @@ if __name__ == "__main__":
         mode="mask"
     )
     print(sketch_image_list)
-    for i in sketch_image_list[0]:
-        i.show()
+    # for i in sketch_image_list[0]:
+    #     i.show()
+    gating_map = get_sketch_spatial_gating_map(sketch_image_list, 32,device="cpu")
+    print(gating_map)
+    for i, j in zip(gating_map[0], sketch_image_list[0]):
+
+        visualize_patch_map_on_image(j, i.reshape(32,32))
+
+

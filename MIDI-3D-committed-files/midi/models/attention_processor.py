@@ -472,9 +472,16 @@ class SketchFusionAttnProcessor:
     Processor for implementing scaled dot-product attention (enabled by default if you're using PyTorch 2.0). This is
     used in the TripoSG model. It applies a s normalization layer and rotary embedding on query and key vector.
 
-    暂时没想到好的点子，先就用人家写的传统cross attention吧
     """
+    # @TODO: Spatial Gating Attention, We enforce the model to focus on sketch edges and lines. Intuitively, the control of focus
+    #     area is not rigid. As we discussed, sketch latent in shallow layers might contain more low-level geometry infos
+    #     while deep layers contains semantic infos. As sketch latent token of each patch not only contains infos merely
+    #     in this patch, the latent token is like 'blurring' during forward computing of ViT, so more infos from other patches
+    #     might be involved in this patch's token. This indicates that suppress attention scores of this 'no-drawing-line'
+    #     patch's token in deep layers naively might be unconvincing. Anyway, we will provide two method discussed above
+    #     and test their effectiveness in practical.
 
+    # @TODO: 我们暂时就
     def __init__(self):
         if not hasattr(F, "scaled_dot_product_attention"):
             raise ImportError(
@@ -489,6 +496,8 @@ class SketchFusionAttnProcessor:
         attention_mask: Optional[torch.Tensor] = None,
         temb: Optional[torch.Tensor] = None,
         image_rotary_emb: Optional[torch.Tensor] = None,
+        gating_map: Optional[torch.Tensor] = None, # Check:
+        gating_intensity: Optional[torch.Tensor] = None, # Check: sketch.sketch_utils.get_sketch_spatial_gating_map
     ) -> torch.Tensor:
         from diffusers.models.embeddings import apply_rotary_emb
 
@@ -533,7 +542,6 @@ class SketchFusionAttnProcessor:
             encoder_hidden_states = attn.norm_encoder_hidden_states(
                 encoder_hidden_states
             )
-        print(f"这不科学:{encoder_hidden_states.shape}")
         key = attn.to_k(encoder_hidden_states)
         value = attn.to_v(encoder_hidden_states)
 
@@ -569,7 +577,17 @@ class SketchFusionAttnProcessor:
                 key = apply_rotary_emb(key, image_rotary_emb)
 
         # the output of sdp = (batch, num_heads, seq_len, head_dim)
-        # TODO: add support for attn.scale when we move to Torch 2.1
+        # @TODO: There we should use gating_map and gating_intensity to scale KEY value. This is equivalent to scale attention score.
+        #       However, the gradient of intensity is not the same between two method. But I think it's fine :)
+
+        if gating_map is not None and gating_intensity is not None:
+            if gating_map.ndim == 3:
+                # [B, L, 1] or [B, 1, L]
+                gating_map.squeeze()
+            assert gating_map.shape[-1] == key.shape[-2], f"Unequal sequence length of gating map and key vectors. Gating map: {gating_map.shape[-1]} while key values: {key.shape[-2]}"
+            suppression = 1.0 - (1.0 - gating_intensity) * (1.0 - gating_map)
+            key = key * suppression.unsqueeze(1).unsqueeze(-1)
+
         hidden_states = F.scaled_dot_product_attention(
             query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
         )

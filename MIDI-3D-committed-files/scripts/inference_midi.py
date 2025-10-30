@@ -341,9 +341,8 @@ def run_midi(
     if do_image_padding:
         rgb_image, seg_image = preprocess_image(rgb_image, seg_image)
     instance_rgbs, instance_masks, scene_rgbs = split_rgb_mask(rgb_image, seg_image)
-
     sketch_image_list = prepare_sketch_images(
-        [sketch_image],
+        sketch_image,
         5,
         1,
         seg_images=[instance_masks],

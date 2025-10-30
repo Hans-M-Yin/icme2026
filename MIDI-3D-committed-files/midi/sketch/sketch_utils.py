@@ -113,6 +113,7 @@ def prepare_sketch_images(
         num_object_per_scene = [num_object_per_scene] * batch_size
     if mode == "no":
         if cfg:
+            print('FUCKFUCKFUCKFUCKFUCKFUCKFUCKFUCKFUCKFUCKv')
             sketch_image_list = [[sketch_images[i]] * (2 *num_object_per_scene[i]) for i in range(batch_size)]
         else:
             sketch_image_list = [[sketch_images[i]] * num_object_per_scene[i] for i in range(batch_size)]
@@ -126,7 +127,11 @@ def prepare_sketch_images(
                 dilated_mask = expand_mask_cv2(seg_image_normalized)
                 sketch_image_np = np.array(sketch_image)
                 sketch_image_curr_list.append(Image.fromarray(((dilated_mask[...,None] * sketch_image_np) * 255.0).astype(np.uint8)))
-            sketch_image_list.append(sketch_image_curr_list)
+            if cfg:
+                sketch_image_list.append(sketch_image_curr_list + sketch_image_curr_list)
+            else:
+                sketch_image_list.append(sketch_image_curr_list)
+
     elif mode == "zoom":
         # Zoom method has updated. (1) Resize the bounding box into 正方形. This is because ViT will resize and clip edge parts.
         # (2) Use mask mode before zoom. To remove other objects in sketch image.
@@ -180,8 +185,12 @@ def prepare_sketch_images(
                 crop_img = sketch_image_pil.crop(bbox_square)
 
                 sketch_image_curr_list.append(crop_img)
+            if cfg:
+                sketch_image_list.append(sketch_image_curr_list + sketch_image_curr_list)
+            else:
+                sketch_image_list.append(sketch_image_curr_list)
 
-            sketch_image_list.append(sketch_image_curr_list)
+            # sketch_image_list.append(sketch_image_curr_list)
     else:
         return None
     return sketch_image_list

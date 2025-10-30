@@ -26,6 +26,8 @@ from midi.sketch.sketch_tower import SketchVisionTowerConfig,SketchVisionTower
 from midi.models.transformers.triposg_transformer import TripoSGDiTModel
 import torch.nn as nn
 
+from midi.sketch.sketch_utils import prepare_sketch_images
+
 def check_meta_tensors(model, verbose: bool = True) -> dict:
     """
     检查模型中所有张量的设备类型，特别关注 meta device 上的张量
@@ -340,6 +342,14 @@ def run_midi(
         rgb_image, seg_image = preprocess_image(rgb_image, seg_image)
     instance_rgbs, instance_masks, scene_rgbs = split_rgb_mask(rgb_image, seg_image)
 
+    sketch_image_list = prepare_sketch_images(
+        [sketch_image],
+        5,
+        1,
+        seg_images=[instance_masks],
+        mode="zoom",
+        cfg=True,
+    )
     pipe_kwargs = {}
     if seed != -1 and isinstance(seed, int):
         pipe_kwargs["generator"] = torch.Generator(device=pipe.device).manual_seed(seed)
@@ -349,7 +359,7 @@ def run_midi(
         image=instance_rgbs,
         mask=instance_masks,
         image_scene=scene_rgbs,
-        sketch_image=sketch_image,
+        sketch_image=sketch_image_list,
         attention_kwargs={"num_instances": num_instances},
         num_inference_steps=num_inference_steps,
         guidance_scale=guidance_scale,
@@ -399,7 +409,8 @@ if __name__ == "__main__":
 
 
     sketch_image = Image.open(args.sketch)
-    sketch_image_list = [sketch_image,sketch_image,sketch_image,sketch_image,sketch_image] * 2
+    sketch_image_list = [sketch_image]
+
     pipe = prepare_pipeline(device, dtype)
     run_midi(
         pipe,

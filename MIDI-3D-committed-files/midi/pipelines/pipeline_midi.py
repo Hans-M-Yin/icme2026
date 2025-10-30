@@ -358,11 +358,14 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         self._interrupt = False
         print(sketch_image)
 
-        processed_sketch_image = self.sketch_fusion_adapter.sketch_tower.preprocessor(images=sketch_image[0], return_tensors="pt")['pixel_values']
+        processed_sketch_image = self.sketch_fusion_adapter.sketch_tower.preprocessor(images=sketch_image, return_tensors="pt")['pixel_values']
         preprocessed_sketch_image = tensor_to_pil_list(processed_sketch_image)
         # Get gating map:
+        # assert len(preprocessed_sketch_image) ==
+        # print('啊啊啊',len(preprocessed_sketch_image))
         gating_map = get_sketch_spatial_gating_map([preprocessed_sketch_image], 32, device=self.device, concat=True)
-        print("草草草草",type(gating_map))
+        print('悠悠',gating_map.shape)
+        # print("草草草草",type(gating_map))
         # 2. Define call parameters
         if isinstance(image, PIL.Image.Image):
             batch_size = 1
@@ -426,17 +429,35 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
                 )
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 timestep = t.expand(latent_model_input.shape[0])
+                from torch.profiler import profile, ProfilerActivity
 
-                noise_pred = self.transformer(
-                    latent_model_input,
-                    timestep,
-                    encoder_hidden_states=image_embeds_1,
-                    encoder_hidden_states_2=image_embeds_2,
-                    sketch_hidden_states=sketch_latents,
-                    attention_kwargs=attention_kwargs,
-                    return_dict=False,
-                    gating_map=gating_map,
-                )[0]
+                with profile(activities=[
+                    ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=False) as prof:
+                    # 为了稳定和准确，通常会先运行几次热身 (warm-up)，这里省略
+
+                    # 正式运行 forward
+                    noise_pred = self.transformer(
+                        latent_model_input,
+                        timestep,
+                        encoder_hidden_states=image_embeds_1,
+                        encoder_hidden_states_2=image_embeds_2,
+                        sketch_hidden_states=sketch_latents,
+                        attention_kwargs=attention_kwargs,
+                        return_dict=False,
+                        gating_map=gating_map,
+                    )[0]
+                    torch.cuda.synchronize()
+                # print('HELLO',  prof.key_averages().table(sort_by="cuda_time_total", row_limit=50, max_name_column_width=50))
+                # noise_pred = self.transformer(
+                #     latent_model_input,
+                #     timestep,
+                #     encoder_hidden_states=image_embeds_1,
+                #     encoder_hidden_states_2=image_embeds_2,
+                #     sketch_hidden_states=sketch_latents,
+                #     attention_kwargs=attention_kwargs,
+                #     return_dict=False,
+                #     gating_map=gating_map,
+                # )[0]
 
                 # perform guidance
                 if self.do_classifier_free_guidance:

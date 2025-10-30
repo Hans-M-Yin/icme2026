@@ -126,6 +126,8 @@ from .sketch_gating import SketchGatingIntensityMLP
 
 from ...sketch.fusion_adapter import SketchFusionAdapter, FusionAdapterConfig
 
+from torch.profiler import record_function
+
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
@@ -368,25 +370,27 @@ class DiTBlock(nn.Module):
         # Notice that normalization is always applied before the real computation in the following blocks.
         # 0. Long Skip Connection
         if self.skip_linear is not None:
-            cat = torch.cat(
-                (
-                    [skip, hidden_states]
-                    if self.skip_concat_front
-                    else [hidden_states, skip]
-                ),
-                dim=-1,
-            )
-            if self.skip_norm_last:
-                # don't do this
-                hidden_states = self.skip_linear(cat)
-                hidden_states = self.skip_norm(hidden_states)
-            else:
-                cat = self.skip_norm(cat)
-                hidden_states = self.skip_linear(cat)
+            with record_function("DIT_LINEAR_NORM"):
+                cat = torch.cat(
+                    (
+                        [skip, hidden_states]
+                        if self.skip_concat_front
+                        else [hidden_states, skip]
+                    ),
+                    dim=-1,
+                )
+                if self.skip_norm_last:
+                    # don't do this
+                    hidden_states = self.skip_linear(cat)
+                    hidden_states = self.skip_norm(hidden_states)
+                else:
+                    cat = self.skip_norm(cat)
+                    hidden_states = self.skip_linear(cat)
 
 
         # 1. Self-Attention
         if self.use_self_attention:
+
             norm_hidden_states = self.norm1(hidden_states)
             attn_output = self.attn1(
                 norm_hidden_states,

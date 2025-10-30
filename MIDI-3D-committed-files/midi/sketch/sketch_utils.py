@@ -128,22 +128,59 @@ def prepare_sketch_images(
                 sketch_image_curr_list.append(Image.fromarray(((dilated_mask[...,None] * sketch_image_np) * 255.0).astype(np.uint8)))
             sketch_image_list.append(sketch_image_curr_list)
     elif mode == "zoom":
+        # Zoom method has updated. (1) Resize the bounding box into 正方形. This is because ViT will resize and clip edge parts.
+        # (2) Use mask mode before zoom. To remove other objects in sketch image.
+        FILL_PAD = 10
         assert seg_images is not None, f"No seg images."
         sketch_image_list = []
-        for idx,(seg_image, sketch_image,) in enumerate(zip(seg_images, sketch_images)):
+
+        for idx, (seg_image, sketch_image) in enumerate(zip(seg_images, sketch_images)):
             sketch_image_curr_list = []
+
             for j in range(num_object_per_scene[idx]):
                 seg_image_normalized = seg_image[j]
-                y_min, y_max, x_min, x_max = get_min_bounding_box(seg_image_normalized)
-                bbox = (
-                    x_min - 5,  # left
-                    y_min - 5,  # top
-                    x_max + 10,  # right
-                    y_max + 5  # bottom
+                dilated_mask = expand_mask_cv2(seg_image_normalized)
+                sketch_image_np = np.array(sketch_image)
+                sketch_image_pil = Image.fromarray(((dilated_mask[...,None] * sketch_image_np) * 255.0).astype(np.uint8))
+                # 1. 获取原始最小 Bounding Box (ymin, ymax, xmin, xmax)
+                y_min_raw, y_max_raw, x_min_raw, x_max_raw = get_min_bounding_box(seg_image_normalized)
+
+                # 2. 计算原始宽度和高度
+                width_raw = x_max_raw - x_min_raw
+                height_raw = y_max_raw - y_min_raw
+
+                # 3. 确定新正方形的边长
+                # 边长 = max(原始长宽) + 填充 (FILL_PAD)
+                side = max(width_raw, height_raw) + FILL_PAD
+
+                # 4. 计算原始 BBox 的中心点
+                center_x = (x_min_raw + x_max_raw) / 2
+                center_y = (y_min_raw + y_max_raw) / 2
+
+                # 5. 计算新的正方形 BBox 坐标
+
+                # 新的左上角 (左/上)
+                x_min_square = int(center_x - side / 2)
+                y_min_square = int(center_y - side / 2)
+
+                # 新的右下角 (右/下)
+                x_max_square = int(center_x + side / 2)
+                y_max_square = int(center_y + side / 2)
+
+                # 6. 构建 PIL crop 所需的 bbox (left, top, right, bottom)
+                # PIL 使用 (左上角X, 左上角Y, 右下角X, 右下角Y)
+                bbox_square = (
+                    x_min_square,  # left (x_min)
+                    y_min_square,  # top (y_min)
+                    x_max_square,  # right (x_max)
+                    y_max_square  # bottom (y_max)
                 )
-                crop_img = sketch_image.crop(bbox)
+
+                # 7. 裁剪图像
+                crop_img = sketch_image_pil.crop(bbox_square)
 
                 sketch_image_curr_list.append(crop_img)
+
             sketch_image_list.append(sketch_image_curr_list)
     else:
         return None
@@ -194,11 +231,10 @@ def get_single_sketch_gating_map(
         )
     # 形状: (1, 1, P_num_H, P_num_W)
     patch_map = (max_pooled_tensor >= threshold).float()
-
     # 6. 最终形状调整
     # 将形状从 (1, 1, P_num_H, P_num_W) 调整为 (P_num_H, P_num_W)
     # print(f"SHAPE {patch_map.squeeze().shape}")
-    return patch_map.squeeze().to(device)
+    return patch_map.squeeze().flatten().to(device)
 
 def get_sketch_spatial_gating_map(
         sketch_image_per_instance: List[List[Image.Image]],
@@ -215,11 +251,13 @@ def get_sketch_spatial_gating_map(
     :param concat: 是否把gating map合成为一个大的tensor，如果False，则返回的是List[Tensor]，每一个元素是一个场景的，形状为[I * H * W], H和W分别表示行数和列数。
     """
     res = []
+
     for sketch_image_this_scene_list in sketch_image_per_instance:
+        print(sketch_image_this_scene_list)
         gating_map_this_scene = [get_single_sketch_gating_map(i, patch_size, device=device) for i in sketch_image_this_scene_list]
         res.append(torch.stack(gating_map_this_scene))
     if concat:
-        res = torch.stack(res)
+        res = torch.vstack(res)
     return res
 
 
@@ -254,6 +292,52 @@ def visualize_patch_map_on_image(
     final_image.show()
 
 
+CLIP_MEAN = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(3, 1, 1)
+CLIP_STD = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(3, 1, 1)
+
+
+def tensor_to_pil_list(tensor: torch.Tensor) -> list[Image.Image]:
+    """
+    将 CLIP Processor 输出的 Tensor 转换回 PIL Image 列表。
+    - 如果输入形状为 (C, H, W)，返回包含 1 个 Image 的列表。
+    - 如果输入形状为 (B, C, H, W)，返回包含 B 个 Image 的列表。
+    """
+    print('本来应该',type(tensor))
+    if tensor.ndim == 3:
+        # 如果是 (C, H, W)，添加一个 Batch 维度使其成为 (1, C, H, W)
+        tensor = tensor.unsqueeze(0)
+
+    # 检查维度是否正确，确保是 (B, C, H, W)
+    if tensor.ndim != 4 or tensor.shape[1] != 3:
+        raise ValueError(
+            f"Input tensor must be 3D (C, H, W) or 4D (B, C, H, W) with 3 channels, but got shape {tensor.shape}")
+
+    # 使用 torch.unbind(dim=0) 将 Batch 维度拆分成一个包含 B 个 (C, H, W) tensor 的元组
+    list_of_tensors = list(torch.unbind(tensor, dim=0))
+
+    output_images = []
+
+    # 遍历每个 (C, H, W) 图像 tensor
+    for single_image_tensor in list_of_tensors:
+        # 确保 MEAN 和 STD 在同一设备上
+        current_mean = CLIP_MEAN.to(single_image_tensor.device)
+        current_std = CLIP_STD.to(single_image_tensor.device)
+
+        # 1. 反归一化： tensor = tensor * std + mean
+        restored_tensor = single_image_tensor * current_std + current_mean
+
+        # 2. 裁剪到 0-1 范围，防止溢出
+        restored_tensor = torch.clamp(restored_tensor, 0.0, 1.0)
+
+        # 3. 转换维度： (C, H, W) -> (H, W, C)
+        #    并转换为 NumPy 数组 (0-255 整数)
+        image_numpy = (restored_tensor.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+
+        # 4. 转换为 PIL Image
+        output_images.append(Image.fromarray(image_numpy))
+
+    return output_images
+
 if __name__ == "__main__":
     rgb_image = "assets/example_data/Realistic-Style/00_rgb.png"
     seg_image = "assets/example_data/Realistic-Style/00_seg.png"
@@ -265,15 +349,24 @@ if __name__ == "__main__":
         5,
         1,
         seg_images=[instance_masks],
-        mode="mask"
+        mode="zoom"
     )
     print(sketch_image_list)
+    from transformers import CLIPImageProcessor
+    processor = CLIPImageProcessor.from_pretrained("openai/clip-vit-base-patch32")
+    inputs = processor(images=sketch_image_list[0], return_tensors="pt")
+
+    # 获取 PyTorch Tensor
+    tensor_sketch_image = inputs['pixel_values']
+
+    preprocessed_sketch_image = tensor_to_pil_list(tensor_sketch_image)
+    for idx,i in enumerate(preprocessed_sketch_image):
+        i.save(str(idx) + ".png", format="png")
     # for i in sketch_image_list[0]:
     #     i.show()
-    gating_map = get_sketch_spatial_gating_map(sketch_image_list, 32,device="cpu")
-    print(gating_map)
-    for i, j in zip(gating_map[0], sketch_image_list[0]):
-
-        visualize_patch_map_on_image(j, i.reshape(32,32))
+    # gating_map = get_sketch_spatial_gating_map([preprocessed_sketch_image], 14,device="cpu")
+    # print(gating_map)
+    # for i, j in zip(gating_map[0], sketch_image_list[0]):
+    #     visualize_patch_map_on_image(j, i.reshape(16, 16))
 
 

@@ -28,6 +28,7 @@ from ..models.transformers import TripoSGDiTModel, set_transformer_attn_processo
 from .pipeline_triposg_output import TripoSGPipelineOutput
 from .pipeline_utils import TransformerDiffusionMixin
 from ..sketch.fusion_adapter import SketchFusionAdapter, FusionAdapterConfig
+from ..sketch.sketch_utils import get_sketch_spatial_gating_map, tensor_to_pil_list
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
@@ -331,7 +332,8 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         image: PipelineImageInput,
         mask: PipelineImageInput,
         image_scene: PipelineImageInput,
-        sketch_image: PipelineImageInput,
+        sketch_image: List,
+
         num_inference_steps: int = 50,
         timesteps: List[int] = None,
         guidance_scale: float = 7.0,
@@ -354,7 +356,13 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         self._guidance_scale = guidance_scale
         self._attention_kwargs = attention_kwargs
         self._interrupt = False
+        print(sketch_image)
 
+        processed_sketch_image = self.sketch_fusion_adapter.sketch_tower.preprocessor(images=sketch_image[0], return_tensors="pt")['pixel_values']
+        preprocessed_sketch_image = tensor_to_pil_list(processed_sketch_image)
+        # Get gating map:
+        gating_map = get_sketch_spatial_gating_map([preprocessed_sketch_image], 32, device=self.device, concat=True)
+        print("草草草草",type(gating_map))
         # 2. Define call parameters
         if isinstance(image, PIL.Image.Image):
             batch_size = 1
@@ -427,6 +435,7 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
                     sketch_hidden_states=sketch_latents,
                     attention_kwargs=attention_kwargs,
                     return_dict=False,
+                    gating_map=gating_map,
                 )[0]
 
                 # perform guidance

@@ -152,7 +152,7 @@ def prepare_pipeline(device, dtype):
         dim_projected_latent=768,
     )
     sketch_vision_tower_config = SketchVisionTowerConfig(
-        select_feature_type="cls_patch",
+        select_feature_type="patch",
         arbitrary_input_size=False,
         input_size=(224,224),
         select_layer="all"

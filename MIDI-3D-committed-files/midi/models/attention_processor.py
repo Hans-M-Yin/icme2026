@@ -496,6 +496,7 @@ class SketchFusionAttnProcessor:
         attention_mask: Optional[torch.Tensor] = None,
         temb: Optional[torch.Tensor] = None,
         image_rotary_emb: Optional[torch.Tensor] = None,
+        num_instances: Optional[Union[int, torch.IntTensor]] = None,
         gating_map: Optional[torch.Tensor] = None, # Check:
         gating_intensity: Optional[torch.Tensor] = None, # Check: sketch.sketch_utils.get_sketch_spatial_gating_map
     ) -> torch.Tensor:

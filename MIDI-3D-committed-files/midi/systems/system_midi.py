@@ -96,7 +96,7 @@ class MIDISystem(BaseSystem):
             # @TODO: Whether apply lora into sketch image encoder?
             self.cfg.sketch_image_tower_lora_config is not None
         )
-
+        print(self.sketch_fusion_adapter_config)
         if self.cfg.training_sketch_module_from_scratch is not None:
             # load this module from scratch
             transformer = TripoSGDiTModel.from_pretrained(os.path.join(self.cfg.pretrained_model_name_or_path, "./transformer"), strict=False,

@@ -20,7 +20,8 @@ class SketchGatingIntensityMLP(nn.Module):
             init_value: float = 0.2,
     ):
         super().__init__()
-
+        print("昨天晚上做了个梦",time_embed_dim)
+        time_embed_dim = 2048
         # Learnable layer embeddings (each layer has its own vector)
         self.layer_embedding = nn.Embedding(num_layers, layer_embed_dim)
 
@@ -53,13 +54,17 @@ class SketchGatingIntensityMLP(nn.Module):
         # @TODO: ISSUE We need to think about the time when we compute gating intensity. because the same intensity will be
         #       reused for multiple times.
         B = time_emb.shape[0]
-
+        # print(time_emb.shape)
         if not torch.is_tensor(layer_id):
             layer_id = torch.tensor([layer_id], device=time_emb.device, dtype=torch.long)
-        if layer_id.ndim == 0:
-            layer_id = layer_id.expand(B)  # [B]
+        if layer_id.ndim == 1:
+            # print("HHHHLL")
+            layer_id = layer_id.expand(B,-1)  # [B]
+            layer_id.squeeze()
         layer_feat = self.layer_embedding(layer_id)  # [B, layer_embed_dim]
 
+        # print(layer_feat.shape, ' ', time_emb.shape)
+        layer_feat = layer_feat.squeeze()
         feat = torch.cat([time_emb, layer_feat], dim=-1)
         gating_intensity = self.fc(feat)  # [B,1]
         return gating_intensity

@@ -122,7 +122,11 @@ from torch import nn
 from ..attention_processor import FusedTripoSGAttnProcessor2_0, TripoSGAttnProcessor2_0, SketchFusionAttnProcessor
 from .modeling_outputs import Transformer1DModelOutput
 
+from .sketch_gating import SketchGatingIntensityMLP
+
 from ...sketch.fusion_adapter import SketchFusionAdapter, FusionAdapterConfig
+
+from torch.profiler import record_function
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -353,37 +357,40 @@ class DiTBlock(nn.Module):
         temb: Optional[torch.Tensor] = None,
         image_rotary_emb: Optional[torch.Tensor] = None,
         skip: Optional[torch.Tensor] = None,
-        attention_kwargs: Optional[Dict[str, Any]] = None,
+        gating_map: Optional[torch.Tensor] = None,
+        gating_intensity: Optional[torch.Tensor] = None,
+        attention_kwargs: Optional[Dict[str, Any]] = None
     ) -> torch.Tensor:
         # @TODO: 最显然的，现在除了encoder_hidden_states和encoder_hidden_states2，还需要一组草图的features，注意这里的DiTBlock假如
-        # @TODO: 是第i层，那么这里输入应该提供第i层草图的latent。然后连同DiT输出的logits一起输入到融合的模块，得到结果。
-        # @TODO: 没有看到Multi-instance attention啊
-        # print("一姐一姐艾拉无忧")
+        #        是第i层，那么这里输入应该提供第i层草图的latent。然后连同DiT输出的logits一起输入到融合的模块，得到结果。
+        #        没有看到Multi-instance attention啊
         # Prepare attention kwargs
         attention_kwargs = attention_kwargs or {}
-
+        # print('雨一直下',encoder_hidden_states.shape)
         # Notice that normalization is always applied before the real computation in the following blocks.
         # 0. Long Skip Connection
         if self.skip_linear is not None:
-            cat = torch.cat(
-                (
-                    [skip, hidden_states]
-                    if self.skip_concat_front
-                    else [hidden_states, skip]
-                ),
-                dim=-1,
-            )
-            if self.skip_norm_last:
-                # don't do this
-                hidden_states = self.skip_linear(cat)
-                hidden_states = self.skip_norm(hidden_states)
-            else:
-                cat = self.skip_norm(cat)
-                hidden_states = self.skip_linear(cat)
+            with record_function("DIT_LINEAR_NORM"):
+                cat = torch.cat(
+                    (
+                        [skip, hidden_states]
+                        if self.skip_concat_front
+                        else [hidden_states, skip]
+                    ),
+                    dim=-1,
+                )
+                if self.skip_norm_last:
+                    # don't do this
+                    hidden_states = self.skip_linear(cat)
+                    hidden_states = self.skip_norm(hidden_states)
+                else:
+                    cat = self.skip_norm(cat)
+                    hidden_states = self.skip_linear(cat)
 
 
         # 1. Self-Attention
         if self.use_self_attention:
+
             norm_hidden_states = self.norm1(hidden_states)
             attn_output = self.attn1(
                 norm_hidden_states,
@@ -424,9 +431,11 @@ class DiTBlock(nn.Module):
                         self.norm_sketch(hidden_states),
                         encoder_hidden_states=sketch_hidden_states,
                         image_rotary_emb=image_rotary_emb,
+                        gating_map=gating_map,
+                        gating_intensity=gating_intensity,
                         **attention_kwargs,
                     )
-                    print(f'TYPE: {type(self.attn_sketch.processor)} ',hidden_states.shape, ' | ',xxx.shape, " | ",sketch_hidden_states.shape)
+                    # print(f'TYPE: {type(self.attn_sketch.processor)} ',hidden_states.shape, ' | ',xxx.shape, " | ",sketch_hidden_states.shape)
                     hidden_states = hidden_states + xxx
 
         # FFN Layer ### TODO: switch norm2 and norm3 in the state dict
@@ -503,6 +512,11 @@ class TripoSGDiTModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                 )
                 for layer in range(num_layers)
             ]
+        )
+
+        self.gating_intensity_mlp = SketchGatingIntensityMLP(
+            time_embed_dim=time_embed_dim,
+            num_layers=num_layers
         )
 
         self.norm_out = LayerNorm(self.inner_dim)
@@ -672,7 +686,8 @@ class TripoSGDiTModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         image_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         attention_kwargs: Optional[Dict[str, Any]] = None,
         return_dict: bool = True,
-        sketch_hidden_states: Optional[List[torch.Tensor]] = None
+        sketch_hidden_states: Optional[List[torch.Tensor]] = None,
+        gating_map: Optional[List[torch.Tensor]] = None
     ):
         """
 
@@ -716,6 +731,8 @@ class TripoSGDiTModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         for layer, block in enumerate(self.blocks):
             skip = None if layer <= self.config.num_layers // 2 else skips.pop()
 
+            gating_intensity = self.gating_intensity_mlp(temb.squeeze(), layer)
+
             if self.training and self.gradient_checkpointing:
 
                 def create_custom_forward(module):
@@ -736,6 +753,8 @@ class TripoSGDiTModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     temb,
                     image_rotary_emb,
                     skip,
+                    gating_map,
+                    gating_intensity,
                     attention_kwargs,
                     **ckpt_kwargs,
                 )
@@ -748,6 +767,8 @@ class TripoSGDiTModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     temb=temb,
                     image_rotary_emb=image_rotary_emb,
                     skip=skip,
+                    gating_map=gating_map,
+                    gating_intensity=gating_intensity,
                     attention_kwargs=attention_kwargs,
                 )  # (N, L, D)
 

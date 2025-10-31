@@ -496,11 +496,13 @@ class SketchFusionAttnProcessor:
         attention_mask: Optional[torch.Tensor] = None,
         temb: Optional[torch.Tensor] = None,
         image_rotary_emb: Optional[torch.Tensor] = None,
+        num_instances: Optional[Union[int, torch.IntTensor]] = None,
         gating_map: Optional[torch.Tensor] = None, # Check:
         gating_intensity: Optional[torch.Tensor] = None, # Check: sketch.sketch_utils.get_sketch_spatial_gating_map
     ) -> torch.Tensor:
         from diffusers.models.embeddings import apply_rotary_emb
-
+        # print('intensity',gating_intensity)
+        print('map',torch.sum(gating_map))
         residual = hidden_states
         if attn.spatial_norm is not None:
             hidden_states = attn.spatial_norm(hidden_states, temb)
@@ -581,6 +583,7 @@ class SketchFusionAttnProcessor:
         #       However, the gradient of intensity is not the same between two method. But I think it's fine :)
 
         if gating_map is not None and gating_intensity is not None:
+            assert gating_map.shape[0] == key.shape[0]
             if gating_map.ndim == 3:
                 # [B, L, 1] or [B, 1, L]
                 gating_map.squeeze()

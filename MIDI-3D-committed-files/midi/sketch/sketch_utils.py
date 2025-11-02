@@ -182,6 +182,7 @@ def prepare_sketch_images(
                 )
 
                 # 7. 裁剪图像
+                # @TODO: 有可能我们在crop后，要先手动插值提高分辨率，因为有可能物体的size不足224。
                 crop_img = sketch_image_pil.crop(bbox_square)
 
                 sketch_image_curr_list.append(crop_img)

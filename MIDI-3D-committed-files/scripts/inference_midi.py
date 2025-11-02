@@ -170,8 +170,9 @@ def prepare_pipeline(device, dtype):
 
     pipe: MIDIPipeline = MIDIPipeline.from_pretrained(
         local_dir,
-        tranformer=transformer,
+        transformer=transformer,
         sketch_fusion_adapter=sketch_fusion_adapter,
+        strict=False,
     )
 
     # for name, param in transformer.named_parameters():

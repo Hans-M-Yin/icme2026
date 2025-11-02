@@ -364,7 +364,7 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         # assert len(preprocessed_sketch_image) ==
         # print('啊啊啊',len(preprocessed_sketch_image))
         gating_map = get_sketch_spatial_gating_map([preprocessed_sketch_image], 32, device=self.device, concat=True)
-        print('悠悠',gating_map.shape)
+        # print('悠悠',gating_map.shape)
         # print("草草草草",type(gating_map))
         # 2. Define call parameters
         if isinstance(image, PIL.Image.Image):

@@ -175,7 +175,6 @@ class SketchVisionTower(ModelMixin, nn.Module):
                 features = image_forward_outs.hidden_states[self.select_layer]
                 if not isinstance(features, tuple):
                     features = (features,)
-
         processed = []
         for layer_feat in features:
             if self.select_feature_type == 'patch':

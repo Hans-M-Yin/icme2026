@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from ..utils.config import parse_structured
 from ..utils.typing import *
-
+from ..sketch.sketch_utils import
 
 def _parse_object_list_single(object_list_path: str):
     all_objects = []

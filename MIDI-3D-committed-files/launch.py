@@ -155,7 +155,13 @@ def main(args, extras) -> None:
             TensorBoardLogger(cfg.trial_dir, name="tb_logs"),
         ]
         if args.wandb:
-            wandb_logger = WandbLogger(project="MIDI", name=f"{cfg.name}-{cfg.tag}")
+            wandb_logger = WandbLogger(
+                project="MIDI-sketch",
+                name=f"{cfg.name}-{cfg.tag}",
+                save_code=True,
+                code_dir=".",
+                config=cfg
+            )
             system._wandb_logger = wandb_logger
             loggers += [wandb_logger]
         rank_zero_only(
@@ -166,6 +172,7 @@ def main(args, extras) -> None:
         )()
 
     trainer = Trainer(
+        # @TODO: Check how to parallel model to accelerate training process.
         callbacks=callbacks,
         logger=loggers,
         inference_mode=False,

@@ -529,6 +529,8 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
             bbox_maxs=bbox_maxs,
         )
 
+
+
     def _init_custom_adapter(
         self,
         # Attention processor
@@ -547,6 +549,7 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
     ):
 
         # @TODO: Add adapter for sketch vision tower.
+        #   在attn的对其过程，这里不传入lora的config就行，把其他都冻住。
         # Modify feature extractor 2 if needed
         if pretrained_image_encoder_2_processor_config is not None:
             self.feature_extractor_2 = BitImageProcessor.from_dict(
@@ -615,6 +618,8 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         )
 
         # LoRA
+
+
         if transformer_lora_config is not None:
             self.transformer.add_adapter(LoraConfig(**transformer_lora_config))
         else:
@@ -634,6 +639,28 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
             self.sketch_fusion_adapter.sketch_tower.add_adapter(LoraConfig(**sketch_vision_tower_lora_config))
         else:
             self.sketch_fusion_adapter.sketch_tower.requires_grad_(False)
+
+
+        if transformer_lora_config is None \
+            and image_encoder_1_lora_config is None \
+            and image_encoder_2_lora_config is None:
+            """
+            Process 1: Only train sketch ViT and Sketch Attention for alignment
+            根据这里参数的结果，上面这些模块应该都已经冻结了。现在解冻sketch attention以及sketch vit.
+            """
+            self.sketch_fusion_adapter.sketch_tower.requires_grad_(True)
+
+            for block in self.transformer.blocks:
+                if hasattr(block, 'attn_sketch'):
+                    for param in block.attn_sketch.parameters():
+                        param.requires_grad = True
+        for name,param in self.named_parameters():
+            if "lora" in name:
+                print(f" [LORA] {name}")
+            else:
+                if param.requires_grad:
+                    print(f" [FULL] {name}")
+
 
     def _load_custom_adapter(self, state_dict):
         parse_state_dict = lambda state_dict, prefix: {

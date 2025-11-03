@@ -184,7 +184,7 @@ class SketchVisionTower(ModelMixin, nn.Module):
         return processed
 
 
-    def forward(self, images: Union[Image, List[Image]]) -> List[torch.Tensor]:
+    def forward(self, images: Union[Image, List[Image], torch.Tensor]) -> List[torch.Tensor]:
         """
         Get layer-level latent tokens of input images.
         :param self:
@@ -192,8 +192,12 @@ class SketchVisionTower(ModelMixin, nn.Module):
         firstly resize the images into a fixed sizes (CLIP needs 224 * 224). We should try to find suitable models for arbitrary resolution inputs.
         :return: image features result
         """
-        inputs = self.preprocessor(images=images, return_tensors="pt")
-        pixel_values = inputs['pixel_values'].to(device=self.device, dtype=self.dtype)
+        if isinstance(images, torch.Tensor):
+            # 默认要是tensor类型，就认为已经被processor处理过了
+            pixel_values = images
+        else:
+            inputs = self.preprocessor(images=images, return_tensors="pt")
+            pixel_values = inputs['pixel_values'].to(device=self.device, dtype=self.dtype)
         image_forward_outs = self.vision_tower(
             pixel_values=pixel_values,
             output_hidden_states=True

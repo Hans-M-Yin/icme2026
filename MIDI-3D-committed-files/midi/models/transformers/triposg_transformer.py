@@ -242,15 +242,7 @@ class DiTBlock(nn.Module):
             else:
                 raise NotImplementedError
 
-
-            """
-            When initialize attention blocks, all blocks use default processors. The processor will be replaced in pipeline_midi.
-            TripoSGAttnProcessor2_0 exactly provide a standard attention processor. This processor as well as MIAttentionProcessor can play role of both
-            self attention and cross attention. The self attention block (attn1) will be replaced with a new MIAttentionProcessor for enabling 
-            multi-instance calculation. Rest attention (cross1,cross2) remain unchanged. I change attn_sketch prcoessor into SketchFusionAttention in
-            pipeline_midi. However, currently SketchFusionAttention is just standard attention. We need to modify it. 
-            """
-            print(f"dim:{dim} | sketch_attention_dim: {sketch_attention_dim} | dim_head: {dim // num_attention_heads}")
+            # print(f"dim:{dim} | sketch_attention_dim: {sketch_attention_dim} | dim_head: {dim // num_attention_heads}")
             self.attn_sketch = Attention(
                 query_dim=dim,
                 cross_attention_dim=sketch_attention_dim,
@@ -462,6 +454,7 @@ class TripoSGDiTModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         width: int = 2048,
         in_channels: int = 64,
         num_layers: int = 21,
+        dit_fusion_layer_seq: List[int] = None,
         cross_attention_dim: int = 768,
         cross_attention_2_dim: int = 1024,
         sketch_attention_dim: int = 768
@@ -483,36 +476,67 @@ class TripoSGDiTModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             timestep_input_dim, time_embed_dim, act_fn="gelu", out_dim=self.inner_dim
         )
         self.proj_in = nn.Linear(self.config.in_channels, self.inner_dim, bias=True)
-
-        self.blocks = nn.ModuleList(
-            [
-                DiTBlock(
-                    dim=self.inner_dim,
-                    num_attention_heads=self.config.num_attention_heads,
-                    use_self_attention=True,
-                    use_cross_attention=True,
-                    self_attention_norm_type="fp32_layer_norm",
-                    cross_attention_dim=self.config.cross_attention_dim,
-                    cross_attention_norm_type=None,
-                    use_cross_attention_2=True,
-                    cross_attention_2_dim=self.config.cross_attention_2_dim,
-                    cross_attention_2_norm_type=None,
-                    activation_fn="gelu",
-                    norm_type="fp32_layer_norm",  # TODO
-                    norm_eps=1e-5,
-                    ff_inner_dim=int(self.inner_dim * self.mlp_ratio),
-                    skip=layer > num_layers // 2,
-                    skip_concat_front=True,
-                    skip_norm_last=True,  # this is an error
-                    qk_norm=True,  # See http://arxiv.org/abs/2302.05442 for details.
-                    qkv_bias=False,
-                    use_sketch_attention=True,
-                    # @TODO: add sketch_attention_dim into configuration.
-                    sketch_attention_dim=self.config.sketch_attention_dim
-                )
-                for layer in range(num_layers)
-            ]
-        )
+        if dit_fusion_layer_seq is not None:
+            self.blocks = nn.ModuleList(
+                [
+                    DiTBlock(
+                        dim=self.inner_dim,
+                        num_attention_heads=self.config.num_attention_heads,
+                        use_self_attention=True,
+                        use_cross_attention=True,
+                        self_attention_norm_type="fp32_layer_norm",
+                        cross_attention_dim=self.config.cross_attention_dim,
+                        cross_attention_norm_type=None,
+                        use_cross_attention_2=True,
+                        cross_attention_2_dim=self.config.cross_attention_2_dim,
+                        cross_attention_2_norm_type=None,
+                        activation_fn="gelu",
+                        norm_type="fp32_layer_norm",  # TODO
+                        norm_eps=1e-5,
+                        ff_inner_dim=int(self.inner_dim * self.mlp_ratio),
+                        skip=layer > num_layers // 2,
+                        skip_concat_front=True,
+                        skip_norm_last=True,  # this is an error
+                        qk_norm=True,  # See http://arxiv.org/abs/2302.05442 for details.
+                        qkv_bias=False,
+                        use_sketch_attention= (layer in dit_fusion_layer_seq),
+                        # @TODO: add sketch_attention_dim into configuration. Not all layers have sketch attention block.
+                        sketch_attention_dim=self.config.sketch_attention_dim
+                    )
+                    for layer in range(num_layers)
+                ]
+            )
+        else:
+            raise NotImplementedError
+            self.blocks = nn.ModuleList(
+                [
+                    DiTBlock(
+                        dim=self.inner_dim,
+                        num_attention_heads=self.config.num_attention_heads,
+                        use_self_attention=True,
+                        use_cross_attention=True,
+                        self_attention_norm_type="fp32_layer_norm",
+                        cross_attention_dim=self.config.cross_attention_dim,
+                        cross_attention_norm_type=None,
+                        use_cross_attention_2=True,
+                        cross_attention_2_dim=self.config.cross_attention_2_dim,
+                        cross_attention_2_norm_type=None,
+                        activation_fn="gelu",
+                        norm_type="fp32_layer_norm",  # TODO
+                        norm_eps=1e-5,
+                        ff_inner_dim=int(self.inner_dim * self.mlp_ratio),
+                        skip=layer > num_layers // 2,
+                        skip_concat_front=True,
+                        skip_norm_last=True,  # this is an error
+                        qk_norm=True,  # See http://arxiv.org/abs/2302.05442 for details.
+                        qkv_bias=False,
+                        use_sketch_attention=True,
+                        # @TODO: add sketch_attention_dim into configuration. Not all layers have sketch attention block.
+                        sketch_attention_dim=self.config.sketch_attention_dim
+                    )
+                    for layer in range(num_layers)
+                ]
+            )
 
         self.gating_intensity_mlp = SketchGatingIntensityMLP(
             time_embed_dim=time_embed_dim,

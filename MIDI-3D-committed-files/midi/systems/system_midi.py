@@ -30,6 +30,7 @@ from .model_utils import (
 from ..sketch.fusion_adapter import FusionAdapterConfig,SketchFusionAdapter
 from ..sketch.sketch_tower import SketchVisionTowerConfig,SketchVisionTower
 
+from ..utils.config import parse_structured
 
 class MIDISystem(BaseSystem):
     @dataclass
@@ -96,15 +97,20 @@ class MIDISystem(BaseSystem):
             # @TODO: Whether apply lora into sketch image encoder?
             self.cfg.sketch_image_tower_lora_config is not None
         )
-        print(self.sketch_fusion_adapter_config)
+        # print(self.sketch_fusion_adapter_config)
         if self.cfg.training_sketch_module_from_scratch is not None:
             # load this module from scratch
-            transformer = TripoSGDiTModel.from_pretrained(os.path.join(self.cfg.pretrained_model_name_or_path, "./transformer"), strict=False,
-                                                          ignore_mismatched_sizes=True)
-            sketch_fusion_adapter = SketchFusionAdapter(self.cfg.sketch_fusion_adapter_config, self.cfg.sketch_vision_tower_config)
+
+            sketch_fusion_adapter_config = parse_structured(FusionAdapterConfig,self.cfg.sketch_fusion_adapter_config)
+            sketch_vision_tower_config = parse_structured(SketchVisionTowerConfig, self.cfg.sketch_vision_tower_config)
+            transformer = TripoSGDiTModel.from_pretrained(os.path.join(self.cfg.pretrained_model_name_or_path, "./transformer"),
+                                                          strict=False,
+                                                          ignore_mismatched_sizes=True,
+                                                          dit_fusion_layer_seq=sketch_fusion_adapter_config.dit_layer_seqs)
+            sketch_fusion_adapter = SketchFusionAdapter(sketch_fusion_adapter_config, sketch_vision_tower_config)
             pipeline: MIDIPipeline = MIDIPipeline.from_pretrained(
                 self.cfg.pretrained_model_name_or_path,
-                tranformer=transformer,
+                transformer=transformer,
                 sketch_fusion_adapter=sketch_fusion_adapter
             )
         else:
@@ -157,27 +163,29 @@ class MIDISystem(BaseSystem):
                 self.image_encoder_1.gradient_checkpointing_enable()
             if self.train_image_encoder_2_lora:
                 self.image_encoder_2.gradient_checkpointing_enable()
-            # @TODO add lora for sketch vision tower
-
+            if self.sketch_vision_tower_lora_config:
+                self.sketch_fusion_adapter.sketch_tower.gradient_checkpointing_enable()
 
     def on_fit_start(self):
         pass
 
     def on_train_start(self):
         # Set the model to train mode for some specific design like dropout, gradient checkpointing, etc.
-        if self.train_transformer_lora:
-            self.transformer.train()
-        if self.train_image_encoder_1_lora:
-            self.image_encoder_1.train()
-        if self.train_image_encoder_2_lora:
-            self.image_encoder_2.train()
+        # if self.train_transformer_lora:
+        self.transformer.train()
+        # if self.train_image_encoder_1_lora:
+        self.image_encoder_1.train()
+        # if self.train_image_encoder_2_lora:
+        self.image_encoder_2.train()
+        self.sketch_fusion_adapter.train()
 
     def forward(
         self,
         noisy_latents: torch.Tensor,
         conditioning_pixel_values_one: torch.Tensor,
         conditioning_pixel_values_two: torch.Tensor,
-        conditioning_sketch_images: Union[torch.Tensor, List[PIL.Image.Image]],
+        conditioning_sketch_images: Union[torch.Tensor],
+        gating_map: Union[torch.Tensor],
         timesteps: torch.Tensor,
         num_instances: Union[torch.IntTensor, List[int]],
         num_instances_per_batch: int,
@@ -217,7 +225,7 @@ class MIDISystem(BaseSystem):
         image_2[image_drop_mask] = 0.0
 
         # process sketch images and get latents
-        sketch_latents = self.sketch_fusion_adapter(sketch_images)
+        sketch_latents = self.sketch_fusion_adapter(conditioning_sketch_images)
         # [ISSUES]: add dropout experimentally. But should check shape firstly.
         sketch_latents[image_drop_mask] = 0.0
 
@@ -231,7 +239,8 @@ class MIDISystem(BaseSystem):
                 "num_instances": num_instances,
                 "num_instances_per_batch": num_instances_per_batch,
             },
-            sketch_hidden_states=sketch_latents
+            sketch_hidden_states=sketch_latents,
+            gating_map=gating_map
         ).sample
 
         return {"model_pred": model_pred}
@@ -242,12 +251,13 @@ class MIDISystem(BaseSystem):
 
         Args:
             batch: The batch of data. Each batch data includes keys `num_instances`, `surface`, `rgb`,
-            `mask`, `rgb_scene`.
+            `mask`, `rgb_scene`. NOW, we add "sketch" and "gating_map" as keys for sketch images.
             batch_idx: The index of the batch.
         """
         with torch.no_grad(), torch.cuda.amp.autocast(enabled=False):
             latents = self.vae.encode(batch["surface"]).latent_dist.sample()
 
+        # TODO:需要检查这里batch的形状。
         bsz = latents.shape[0]
         num_instances_per_batch = batch["num_instances_per_batch"]
         num_batches = bsz // num_instances_per_batch
@@ -273,6 +283,7 @@ class MIDISystem(BaseSystem):
             [batch["rgb"], batch["rgb_scene"], batch["mask"]], dim=1
         )
         conditioning_sketch_images = batch['sketch']
+        gating_map = batch["gating_map"]
 
 
         model_pred: Tensor = self(
@@ -280,6 +291,7 @@ class MIDISystem(BaseSystem):
             conditioning_pixel_values_one,
             conditioning_pixel_values_two,
             conditioning_sketch_images,
+            gating_map,
             timesteps,
             **batch,
         )["model_pred"]
@@ -328,6 +340,14 @@ class MIDISystem(BaseSystem):
                 ),
                 "kwargs": {"data_format": "HWC"},
             },
+            {
+                "type": "rgb",
+                "img": rearrange(
+                    batch['sketch'], "B C H W -> (B H) W C"
+                ),
+                "kwargs": {"data_format": "HWC"}
+            }
+            # @TODO: We need gating maps too. But I have no idea how to code.
         ]
         return images
 
@@ -354,6 +374,14 @@ class MIDISystem(BaseSystem):
                 ),
                 "kwargs": {"data_format": "HWC"},
             },
+            {
+                "type": "rgb",
+                "img": rearrange(
+                    batch['sketch'], "B C H W -> (B H) W C"
+                ),
+                "kwargs": {"data_format": "HWC"}
+            }
+            # @TODO: We need gating maps too. But I have no idea how to code.
         ]
         return images
 
@@ -367,23 +395,32 @@ class MIDISystem(BaseSystem):
         )
 
     @rank_zero_only
-    def save_model_weights(self):
-        if (
-            self.train_transformer_lora
-            or self.train_image_encoder_1_lora
-            or self.train_image_encoder_2_lora
-            # @TODO: add sketch vision tower lora
-        ):
-            save_dir = os.path.join(
-                os.path.dirname(self.get_save_dir()), "custom_adapter"
-            )
-            os.makedirs(save_dir, exist_ok=True)
-            self.pipeline.save_custom_adapter(
-                save_dir,
-                f"custom_adapter_e{self.current_epoch}_it{self.true_global_step}.safetensors",
-                safe_serialization=True,
-                include_keys=["lora"],
-            )
+    def save_model_weights(self, save_lora_adapter: bool = False, save_path: Optional[str] = None):
+        """
+        Save model. MIDI implements only lora adapters. In our training method. we should firstly train sketch attention
+        without lora. And then train all the model with lora (or full-param training if needed).
+        """
+        if save_lora_adapter:
+            if (
+                self.train_transformer_lora
+                or self.train_image_encoder_1_lora
+                or self.train_image_encoder_2_lora
+                or self.sketch_image_encoder_lora
+                # @TODO: add sketch vision tower lora
+            ):
+                save_dir = os.path.join(
+                    os.path.dirname(self.get_save_dir()), "custom_adapter"
+                )
+                os.makedirs(save_dir, exist_ok=True)
+                self.pipeline.save_custom_adapter(
+                    save_dir,
+                    f"custom_adapter_e{self.current_epoch}_it{self.true_global_step}.safetensors",
+                    safe_serialization=True,
+                    include_keys=["lora"],
+                )
+            else:
+                assert save_path is not None, "No saved Path."
+                self.pipeline.save_pretrained(save_path)
 
     @torch.no_grad()
     def generate_samples(
@@ -586,6 +623,7 @@ class MIDISystem(BaseSystem):
         self.transformer.eval()
         self.image_encoder_1.eval()
         self.image_encoder_2.eval()
+        self.sketch_fusion_adapter.eval()
 
     def on_validation_epoch_end(self):
         self.save_model_weights()
@@ -597,6 +635,8 @@ class MIDISystem(BaseSystem):
             self.image_encoder_1.train()
         if self.train_image_encoder_2_lora:
             self.image_encoder_2.train()
+        if self.sketch_fusion_adapter_lora:
+            self.sketch_fusion_adapter.train()
 
     def test_step(self, batch, batch_idx):
         try:

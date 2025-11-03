@@ -365,7 +365,7 @@ class MultiObjectWithSketchDataset(MultiObjectDataset):
             if mask is not None:
                 sketch_image_list = prepare_sketch_images(
                     [sketch_image],
-                    len(mask_list),  # num_instance
+                    mask.shape[0],  # num_instance
                     1,
                     seg_images=[mask],
                     mode="zoom",

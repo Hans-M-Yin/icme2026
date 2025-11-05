@@ -8,12 +8,12 @@ import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
-from PIL import Image
+import PIL.Image as Image
 from torch.utils.data import DataLoader, Dataset
-from typing import override
+
 from ..utils.config import parse_structured
 from ..utils.typing import *
-from multi_object import *
+from .multi_object import *
 from transformers import AutoProcessor
 from ..sketch.sketch_utils import get_sketch_spatial_gating_map, prepare_sketch_images, tensor_to_pil_list
 
@@ -27,7 +27,7 @@ class MultiObjectWithSketchDataset(MultiObjectDataset):
         self.cfg: MultiObjectDataWithSketchConfig = cfg
         self.sketch_processor = AutoProcessor.from_pretrained(sketch_vision_tower_path)
 
-    @override
+    
     def load_image(
         self,
         path,
@@ -66,7 +66,7 @@ class MultiObjectWithSketchDataset(MultiObjectDataset):
             return image_bg, mask
         return image_bg
 
-    @override
+    
     def load_parts(
         self,
         rgb_path: str,
@@ -99,7 +99,8 @@ class MultiObjectWithSketchDataset(MultiObjectDataset):
 
         # @TODO: use informative_drawings API to get sketch image of scene. Check rgb whether it's the original image of
         #   the scene. If yes, use this image as input to get sketch images.
-        sketch_image = None
+        print(rgb_image.shape)
+        sketch_image = Image.new('RGB', (rgb_image[0], rgb_image[1]), color=(255, 255, 255))
 
         id_map = torch.from_numpy(
             np.array(Image.open(idmap_path).resize((width, height), Image.NEAREST))
@@ -152,7 +153,7 @@ class MultiObjectWithSketchDataset(MultiObjectDataset):
             return rgb_list, mask_list, success_list, processed_sketch_image_tensor, gating_map
         return rgb_list, mask_list, success_list, processed_sketch_image_tensor
 
-    @override
+    
     def _getitem_scene(self, index):
         background_color = torch.as_tensor(self.get_bg_color(self.cfg.background_color))
 
@@ -318,7 +319,7 @@ class MultiObjectWithSketchDataset(MultiObjectDataset):
 
         return rv
 
-    @override
+    
     def _getitem_mix(self, index):
 
 
@@ -360,7 +361,7 @@ class MultiObjectWithSketchDataset(MultiObjectDataset):
             )
             # @TODO: informative_drawings API. Result should be a list[PIL.Image], each element is a sketch image of a scene.
             #   Might you will check if rgb is corresponding original image. If yes, use rgb as original input and get sketch.
-            sketch_image = None
+            sketch_image = Image.new('RGB', (self.cfg.width, self.cfg.height), color=(255, 255, 255))
 
             if mask is not None:
                 sketch_image_list = prepare_sketch_images(
@@ -377,8 +378,11 @@ class MultiObjectWithSketchDataset(MultiObjectDataset):
                 'pixel_values']
             process_sketch_image = tensor_to_pil_list(processed_sketch_image_tensor)
             patch_size = self.cfg.sketch_vision_tower_patch_size
-            _gating_map = get_sketch_spatial_gating_map([process_sketch_image], patch_size, str(rgb.device),
-                                                           concat=True)
+            _gating_map = get_sketch_spatial_gating_map(
+                [process_sketch_image],
+                patch_size,
+                str(rgb.device),
+                concat=True)
 
             rgbs.append(rgb)
             masks.append(mask)
@@ -409,7 +413,7 @@ class MultiObjectWithSketchDataset(MultiObjectDataset):
 
         return rv
 
-    @override
+    
     def collate(self, batch):
         batch = torch.utils.data.default_collate(batch)
         pack = lambda t: t.view(-1, *t.shape[2:])
@@ -429,3 +433,51 @@ class MultiObjectWithSketchDataset(MultiObjectDataset):
         batch["num_instances_per_batch"] = self.cfg.num_instances_per_batch
 
         return batch
+
+class MultiObjectWithSketchDataModule(pl.LightningDataModule):
+    cfg: MultiObjectDataWithSketchConfig
+
+    def __init__(self, cfg: Optional[Union[dict, DictConfig]] = None) -> None:
+        super().__init__()
+        self.cfg = parse_structured(MultiObjectDataWithSketchConfig, cfg)
+
+    def setup(self, stage=None) -> None:
+        if stage in [None, "fit"]:
+            self.train_dataset = MultiObjectWithSketchDataset(self.cfg, "train")
+        if stage in [None, "fit", "validate"]:
+            self.val_dataset = MultiObjectWithSketchDataset(self.cfg, "val")
+        if stage in [None, "test", "predict"]:
+            self.test_dataset = MultiObjectWithSketchDataset(self.cfg, "test")
+
+    def prepare_data(self):
+        pass
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.cfg.batch_size,
+            num_workers=self.cfg.num_workers,
+            shuffle=True,
+            collate_fn=self.train_dataset.collate,
+        )
+
+    def val_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.cfg.eval_batch_size,
+            num_workers=self.cfg.num_workers,
+            shuffle=False,
+            collate_fn=self.val_dataset.collate,
+        )
+
+    def test_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.test_dataset,
+            batch_size=self.cfg.eval_batch_size,
+            num_workers=self.cfg.num_workers,
+            shuffle=False,
+            collate_fn=self.test_dataset.collate,
+        )
+
+    def predict_dataloader(self) -> DataLoader:
+        return self.test_dataloader()

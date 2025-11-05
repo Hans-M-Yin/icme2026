@@ -1,9 +1,13 @@
 import torch
+
 import torch.nn as nn
-from typing import Union, List, Tuple, Callable
+from typing import Optional,Union, List, Tuple, Callable
 from PIL.Image import Image
 from transformers import CLIPVisionModel, CLIPImageProcessor, CLIPVisionConfig, AutoModel, AutoProcessor
 import dataclasses
+from dataclasses import dataclass, field
+from diffusers.loaders import PeftAdapterMixin
+
 import PIL
 import numpy as np
 from diffusers.configuration_utils import ConfigMixin
@@ -52,27 +56,27 @@ def resize_image(images: Union[List,np.array,Image], size: Tuple[int, int], smar
 @dataclasses.dataclass
 class SketchVisionTowerConfig(ConfigMixin):
 
-    select_feature_type: str = None
+    select_feature_type: Optional[str] = None
 
-    arbitrary_input_size: bool = False
+    arbitrary_input_size: Optional[bool] = False
 
-    input_size: Tuple[int, int] = (224,224)
+    input_size:  List[int] = field(default_factory=lambda: [224, 224])
 
-    select_layer: Union[str, int, list] = "all"
+    select_layer: Optional[str] = "all"
     # Not Use
-    image_preprocessor: Callable = resize_image
+    image_preprocessor: Optional[str] = resize_image
 
-    device: str = "cuda"
+    device: Optional[str] = "cuda"
 
-    pretrained_model_name_or_path: str = None
+    pretrained_model_name_or_path: Optional[str] = None
 
-    model_type: str = "sketch_vision_tower"
+    model_type: Optional[str] = "sketch_vision_tower"
 
 
 # @TODO: Need implementation for parallel training methods. model loaded from huggingface is simply on GPU:0. Although
 # @TODO: ViT is such a small module that it's not necessary for parallel, we should consider it's parallel to boost training
 # @TODO: and inference process.
-class SketchVisionTower(ModelMixin, nn.Module):
+class SketchVisionTower(ModelMixin, PeftAdapterMixin, nn.Module):
     def __init__(self, config: SketchVisionTowerConfig):
         super().__init__()
 

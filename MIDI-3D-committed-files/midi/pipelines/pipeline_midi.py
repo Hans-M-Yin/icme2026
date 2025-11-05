@@ -551,6 +551,8 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         # @TODO: Add adapter for sketch vision tower.
         #   在attn的对其过程，这里不传入lora的config就行，把其他都冻住。
         # Modify feature extractor 2 if needed
+        print(pretrained_image_encoder_2_processor_config)
+        print(self.feature_extractor_2.to_dict())
         if pretrained_image_encoder_2_processor_config is not None:
             self.feature_extractor_2 = BitImageProcessor.from_dict(
                 self.feature_extractor_2.to_dict(),
@@ -619,6 +621,9 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
 
         # LoRA
 
+        transformer_lora_config = None
+        image_encoder_1_lora_config = None
+        image_encoder_2_lora_config = None
 
         if transformer_lora_config is not None:
             self.transformer.add_adapter(LoraConfig(**transformer_lora_config))
@@ -654,7 +659,7 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
                 if hasattr(block, 'attn_sketch'):
                     for param in block.attn_sketch.parameters():
                         param.requires_grad = True
-        for name,param in self.named_parameters():
+        for name,param in self.transformer.named_parameters():
             if "lora" in name:
                 print(f" [LORA] {name}")
             else:

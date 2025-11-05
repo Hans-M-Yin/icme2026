@@ -27,7 +27,7 @@ And the new attention method are novelty we need.
 """
 import dataclasses
 import os
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, Optional
 import torch.nn as nn
 from .sketch_tower import SketchVisionTower, SketchVisionTowerConfig
 from diffusers.models.modeling_utils import ModelMixin
@@ -44,33 +44,33 @@ import torch.nn.functional as F
 @dataclasses.dataclass
 class FusionAdapterConfig(ConfigMixin):
 
-    num_dit_layers: int = None
-    num_vision_layers: int = None
-    dim_dit_latent: int = None
-    dim_vision_latent: int = None
+    num_dit_layers: Optional[int] = None
+    num_vision_layers: Optional[int] = None
+    dim_dit_latent: Optional[int] = None
+    dim_vision_latent: Optional[int] = None
 
     # Fusion method
-    fusion_mode: str = "specific"
+    fusion_mode: Optional[str] = "specific"
     # specific: manually assign two sequences, DiT latent in layer {dit_layer_seqs[i]} will be fused with vision latent in layer {vision_layer_seqs[i]}
     # Other method...
-    dit_layer_seqs: List[int] = None
-    vision_layer_seqs: List[int] = None
+    dit_layer_seqs: Optional[List[int]] = None
+    vision_layer_seqs: Optional[List[int]] = None
 
     # Projector
-    enable_projector: bool = False
+    enable_projector: Optional[bool] = False
 
     # layer-wise: each vision tower layer has a own projector.
     # all: all layers use the same projector
-    projector_mode: str = "layer_wise"
+    projector_mode: Optional[str] = "layer_wise"
 
     # linear: nn.Linear as projector
     # mlp: nn.Linear + nn.Linear as projector. hidden_dim is required
-    projector_type: str = "linear"
-    projector_hidden_dim: int = None
+    projector_type: Optional[str] = "linear"
+    projector_hidden_dim: Optional[int] = None
 
-    dim_projected_latent: int = 512
+    dim_projected_latent: Optional[int] = 512
 
-    model_type: str = "sketch_vision_tower"
+    model_type: Optional[str] = "sketch_vision_tower"
 
 
 

@@ -45,7 +45,7 @@ class MIDISystem(BaseSystem):
         image_encoder_2_init_projection_method: str = "clone"
 
         # Sketch Adapter
-        sketch_vision_tower_config : SketchVisionTowerConfig = None
+        sketch_vision_tower_config : Optional[SketchVisionTowerConfig] = None
         sketch_fusion_adapter_config: Optional[FusionAdapterConfig] = None
         training_sketch_module_from_scratch: bool = True
         ## Attention processor
@@ -83,6 +83,7 @@ class MIDISystem(BaseSystem):
 
 
     def configure(self):
+        print("")
         super().configure()
 
         # Some parameters
@@ -93,9 +94,9 @@ class MIDISystem(BaseSystem):
         self.train_image_encoder_2_lora = (
             self.cfg.image_encoder_2_lora_config is not None
         )
-        self.sketch_image_encoder_lora = (
+        self.sketch_vision_tower_lora_config = (
             # @TODO: Whether apply lora into sketch image encoder?
-            self.cfg.sketch_image_tower_lora_config is not None
+            self.cfg.sketch_vision_tower_lora_config is not None
         )
         # print(self.sketch_fusion_adapter_config)
         if self.cfg.training_sketch_module_from_scratch is not None:
@@ -123,6 +124,30 @@ class MIDISystem(BaseSystem):
         # Initialize custom adapter: adapted Dinov2 and attn_processor
         pipeline.init_custom_adapter(
             self.cfg.set_self_attn_module_names,
+            [
+            "blocks.0",
+            "blocks.1",
+            "blocks.2",
+            "blocks.3",
+            "blocks.4",
+            "blocks.5",
+            "blocks.6",
+            "blocks.7",
+            "blocks.8",
+            "blocks.9",
+            "blocks.10",
+            "blocks.11",
+            "blocks.12",
+            "blocks.13",
+            "blocks.14",
+            "blocks.15",
+            "blocks.16",
+            "blocks.17",
+            "blocks.18",
+            "blocks.19",
+            "blocks.20",
+            "blocks.21",
+            ],
             self.cfg.pretrained_image_encoder_2_processor_config,
             self.cfg.image_encoder_2_input_channels,
             self.cfg.image_encoder_2_init_projection_method,
@@ -158,13 +183,16 @@ class MIDISystem(BaseSystem):
 
         # Prepare gradient checkpointing
         if self.cfg.gradient_checkpointing:
-            self.transformer.enable_gradient_checkpointing()
+            # [ISSUE] 这里没改为啥报错呢？
+            # self.transformer.enable_gradient_checkpointing()
+            self.transformer.gradient_checkpointing = True
             if self.train_image_encoder_1_lora:
                 self.image_encoder_1.gradient_checkpointing_enable()
             if self.train_image_encoder_2_lora:
                 self.image_encoder_2.gradient_checkpointing_enable()
-            if self.sketch_vision_tower_lora_config:
-                self.sketch_fusion_adapter.sketch_tower.gradient_checkpointing_enable()
+            # [ISSUE] 这里sketch_tower 没加grad_ckpt，报错啊。
+            # if self.sketch_vision_tower_lora_config:
+            #     self.sketch_fusion_adapter.sketch_tower.gradient_checkpointing_enable()
 
     def on_fit_start(self):
         pass

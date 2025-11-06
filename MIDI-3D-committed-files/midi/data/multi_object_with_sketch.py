@@ -19,14 +19,16 @@ from ..sketch.sketch_utils import get_sketch_spatial_gating_map, prepare_sketch_
 
 @dataclass
 class MultiObjectDataWithSketchConfig(MultiObjectDataModuleConfig):
-    sketch_vision_tower_patch_size: int = 14
-
+    sketch_vision_tower_patch_size: int = 32
+    sketch_vision_tower_path: Optional[str] = None
 class MultiObjectWithSketchDataset(MultiObjectDataset):
     def __init__(self, cfg: Any, sketch_vision_tower_path: str, split: str = "train") -> None:
         super().__init__(cfg,split)
         self.cfg: MultiObjectDataWithSketchConfig = cfg
-        self.sketch_processor = AutoProcessor.from_pretrained(sketch_vision_tower_path)
 
+        if sketch_vision_tower_path is None:
+            sketch_vision_tower_path = self.cfg.sketch_vision_tower_path
+        self.sketch_processor = AutoProcessor.from_pretrained(sketch_vision_tower_path)
     
     def load_image(
         self,
@@ -99,15 +101,14 @@ class MultiObjectWithSketchDataset(MultiObjectDataset):
 
         # @TODO: use informative_drawings API to get sketch image of scene. Check rgb whether it's the original image of
         #   the scene. If yes, use this image as input to get sketch images.
-        print(rgb_image.shape)
-        sketch_image = Image.new('RGB', (rgb_image[0], rgb_image[1]), color=(255, 255, 255))
+        # print("#########################")
+        sketch_image = Image.new('RGB', (rgb_image.shape[0], rgb_image.shape[1]), color=(255, 255, 255))
 
         id_map = torch.from_numpy(
             np.array(Image.open(idmap_path).resize((width, height), Image.NEAREST))
         )
         height, width, _ = rgb_image.shape
         rgb_list, mask_list, success_list = [], [], []
-
         for idx in indexes:
             mask = (id_map == idx).float()
 
@@ -138,7 +139,7 @@ class MultiObjectWithSketchDataset(MultiObjectDataset):
                 1,
                 seg_images=[mask_list],
                 mode="zoom",
-                cfg=True,
+                cfg=False,
             )
         else:
             raise ValueError("No valid sketch images found.")
@@ -148,7 +149,8 @@ class MultiObjectWithSketchDataset(MultiObjectDataset):
             patch_size = self.cfg.sketch_vision_tower_patch_size
             gating_map = get_sketch_spatial_gating_map([process_sketch_image], patch_size, str(rgb_list[0].device), concat=True)
 
-        # gating_map 和 sketch_image的类型，还要看最后train的代码怎么写的进行相应调整。
+
+            # gating_map 和 sketch_image的类型，还要看最后train的代码怎么写的进行相应调整。
         #
             return rgb_list, mask_list, success_list, processed_sketch_image_tensor, gating_map
         return rgb_list, mask_list, success_list, processed_sketch_image_tensor
@@ -299,6 +301,7 @@ class MultiObjectWithSketchDataset(MultiObjectDataset):
                 "sketch",
                 "gating_map"
             ]
+            print(f"BEFORE, rgb: {rv['rgb'].shape} | gating: {rv['gating_map'].shape}")
             if num_instances < self.cfg.num_instances_per_batch:
                 pad = self.cfg.num_instances_per_batch - num_instances
                 indices = torch.randint(
@@ -308,6 +311,8 @@ class MultiObjectWithSketchDataset(MultiObjectDataset):
                     k: torch.cat([v, v[indices]]) if k in keys else v
                     for k, v in rv.items()
                 }
+                print(f"AFTER, rgb: {updated_dict['rgb'].shape} | gating: {updated_dict['gating_map'].shape}")
+
             else:
                 indices = torch.randperm(num_instances, device=surfaces.device)
                 indices = indices[: self.cfg.num_instances_per_batch]
@@ -388,7 +393,7 @@ class MultiObjectWithSketchDataset(MultiObjectDataset):
             masks.append(mask)
             sketch.append(processed_sketch_image_tensor)
             gating_map.append(_gating_map)
-
+        # print(f"#########################44num instance: 1")
         surfaces = torch.stack(surfaces)  # (num_instances, num_points, 6)
         rgb = torch.stack(rgbs).permute(0, 3, 1, 2)
         mask = torch.stack(masks).unsqueeze(1)
@@ -415,6 +420,13 @@ class MultiObjectWithSketchDataset(MultiObjectDataset):
 
     
     def collate(self, batch):
+        # for idx,i in enumerate(batch):
+        #     for k,v in i.items():
+        #         if type(v) == torch.Tensor:
+        #             print(f"{idx} key: {k} value: {v.shape}")
+        #         else:
+        #             print(f"{idx} key: {k} value: {v}")
+        #     # print("####################")
         batch = torch.utils.data.default_collate(batch)
         pack = lambda t: t.view(-1, *t.shape[2:])
         for k in batch.keys():
@@ -443,16 +455,21 @@ class MultiObjectWithSketchDataModule(pl.LightningDataModule):
 
     def setup(self, stage=None) -> None:
         if stage in [None, "fit"]:
-            self.train_dataset = MultiObjectWithSketchDataset(self.cfg, "train")
+            # @TODO: change back to train
+            self.train_dataset = MultiObjectWithSketchDataset(self.cfg, "openai/clip-vit-base-patch32", "test")
         if stage in [None, "fit", "validate"]:
-            self.val_dataset = MultiObjectWithSketchDataset(self.cfg, "val")
+            self.val_dataset = MultiObjectWithSketchDataset(self.cfg, "openai/clip-vit-base-patch32", "val")
         if stage in [None, "test", "predict"]:
-            self.test_dataset = MultiObjectWithSketchDataset(self.cfg, "test")
+            self.test_dataset = MultiObjectWithSketchDataset(self.cfg, "openai/clip-vit-base-patch32", "test")
 
     def prepare_data(self):
         pass
 
     def train_dataloader(self) -> DataLoader:
+        # print("#########3")
+        # print(len(self.train_dataset))
+        # print("#########4")
+
         return DataLoader(
             self.train_dataset,
             batch_size=self.cfg.batch_size,

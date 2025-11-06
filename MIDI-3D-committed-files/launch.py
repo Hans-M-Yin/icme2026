@@ -4,7 +4,7 @@ import contextlib
 import logging
 import os
 import sys
-
+import multiprocessing as mp
 
 class ColoredFilter(logging.Filter):
     """
@@ -65,7 +65,6 @@ def main(args, extras) -> None:
     from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
     from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger, WandbLogger
     from pytorch_lightning.utilities.rank_zero import rank_zero_only
-
     if args.typecheck:
         from jaxtyping import install_import_hook
 
@@ -155,12 +154,42 @@ def main(args, extras) -> None:
             TensorBoardLogger(cfg.trial_dir, name="tb_logs"),
         ]
         if args.wandb:
+
+            def get_wandb_safe_config(cfg):
+                """提取WandB安全的配置项"""
+                safe_config = {}
+
+                # 只提取基本数据类型
+                basic_types = (str, int, float, bool, type(None))
+
+                for key, value in cfg.__dict__.items():
+                    # 跳过私有属性
+                    if key.startswith('_'):
+                        continue
+
+                    # 只保留基本数据类型
+                    if isinstance(value, basic_types):
+                        safe_config[key] = value
+                    elif isinstance(value, (list, tuple)):
+                        # 检查列表/元组中的元素是否都是基本类型
+                        if all(isinstance(item, basic_types) for item in value):
+                            safe_config[key] = value
+                    elif isinstance(value, dict):
+                        # 检查字典的键和值是否都是基本类型
+                        if all(isinstance(k, basic_types) and isinstance(v, basic_types)
+                               for k, v in value.items()):
+                            safe_config[key] = value
+                    else:
+                        # 其他类型转换为字符串
+                        safe_config[key] = str(value)
+
+                return safe_config
+
             wandb_logger = WandbLogger(
                 project="MIDI-sketch",
                 name=f"{cfg.name}-{cfg.tag}",
                 save_code=True,
-                code_dir=".",
-                config=cfg
+                config=get_wandb_safe_config(cfg)
             )
             system._wandb_logger = wandb_logger
             loggers += [wandb_logger]
@@ -177,6 +206,7 @@ def main(args, extras) -> None:
         logger=loggers,
         inference_mode=False,
         accelerator="gpu",
+        strategy=pl.strategies.FSDPStrategy(sharding_strategy="FULL_SHARD", cpu_offload=True),
         devices=devices,
         **cfg.trainer,
     )
@@ -192,6 +222,8 @@ def main(args, extras) -> None:
         system.set_resume_status(ckpt["epoch"], ckpt["global_step"])
 
     if args.train:
+
+
         trainer.fit(system, datamodule=dm, ckpt_path=cfg.resume)
         trainer.test(system, datamodule=dm)
         if args.gradio:
@@ -211,6 +243,7 @@ def main(args, extras) -> None:
 
 
 if __name__ == "__main__":
+    mp.set_start_method('spawn', force=True)
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True, help="path to config file")
     parser.add_argument(

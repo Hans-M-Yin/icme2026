@@ -502,9 +502,11 @@ class SketchFusionAttnProcessor:
     ) -> torch.Tensor:
         from diffusers.models.embeddings import apply_rotary_emb
         # print('intensity',gating_intensity)
-        print('map',torch.sum(gating_map))
+        # print('map',torch.sum(gating_map))
         residual = hidden_states
+        # print(f"### {gating_map.shape} ### {encoder_hidden_states.shape}")
         if attn.spatial_norm is not None:
+            # print("这一行到底有没有走？")
             hidden_states = attn.spatial_norm(hidden_states, temb)
 
         input_ndim = hidden_states.ndim
@@ -588,7 +590,11 @@ class SketchFusionAttnProcessor:
                 # [B, L, 1] or [B, 1, L]
                 gating_map.squeeze()
             assert gating_map.shape[-1] == key.shape[-2], f"Unequal sequence length of gating map and key vectors. Gating map: {gating_map.shape[-1]} while key values: {key.shape[-2]}"
-            suppression = 1.0 - (1.0 - gating_intensity) * (1.0 - gating_map)
+            # print(gating_intensity.shape, ' ', gating_map.shape)
+            if gating_intensity.shape[0] == 2 * gating_map.shape[0]:
+                suppression = 1.0 - (1.0 - gating_intensity) * (1.0 - gating_map.repeat_interleave(2, dim=0))
+            elif gating_intensity.shape[0] == gating_map.shape[0]:
+                suppression = 1.0 - (1.0 - gating_intensity) * (1.0 - gating_map)
             key = key * suppression.unsqueeze(1).unsqueeze(-1)
 
         hidden_states = F.scaled_dot_product_attention(

@@ -232,7 +232,7 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         if latents is not None:
             return latents.to(device=device, dtype=dtype)
         shape = (batch_size, num_tokens, num_channels_latents)
-        print(f"###shape:{shape}")
+        # print(f"###shape:{shape}")
 
         if isinstance(generator, list) and len(generator) != batch_size:
             raise ValueError(
@@ -356,7 +356,7 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         self._guidance_scale = guidance_scale
         self._attention_kwargs = attention_kwargs
         self._interrupt = False
-        print(sketch_image)
+        # print(sketch_image)
 
         processed_sketch_image = self.sketch_fusion_adapter.sketch_tower.preprocessor(images=sketch_image, return_tensors="pt")['pixel_values']
         preprocessed_sketch_image = tensor_to_pil_list(processed_sketch_image)
@@ -385,14 +385,20 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         image_embeds_2, negative_image_embeds_2 = self.encode_image_2(
             image, image_scene, mask, device, num_images_per_prompt
         )
+        # print(sketch_image)
+
+        # print(sketch_latents)
+        # print(image_embeds_1.shape)
+        # print(image_embeds_2.shape)
 
         if self.do_classifier_free_guidance:
             image_embeds_1 = torch.cat([negative_image_embeds_1, image_embeds_1], dim=0)
             image_embeds_2 = torch.cat([negative_image_embeds_2, image_embeds_2], dim=0)
-
-        # print(f"SHAPE1 : {image_embeds_1.shape} | SHAPE2 : {image_embeds_2.shape}")
+            sketch_image = sketch_image + sketch_image
+            gating_map = torch.cat([gating_map,torch.ones_like(gating_map)], dim=0)
         sketch_latents = self.get_sketch_fusion_latent(sketch_image)
 
+        # print(f"SHAPE1 : {image_embeds_1.shape} | SHAPE2 : {image_embeds_2.shape}")
         # 4. Prepare timesteps
         timesteps, num_inference_steps = retrieve_timesteps(
             self.scheduler, num_inference_steps, device, timesteps
@@ -551,8 +557,8 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         # @TODO: Add adapter for sketch vision tower.
         #   在attn的对其过程，这里不传入lora的config就行，把其他都冻住。
         # Modify feature extractor 2 if needed
-        print(pretrained_image_encoder_2_processor_config)
-        print(self.feature_extractor_2.to_dict())
+        # print(pretrained_image_encoder_2_processor_config)
+        # print(self.feature_extractor_2.to_dict())
         if pretrained_image_encoder_2_processor_config is not None:
             self.feature_extractor_2 = BitImageProcessor.from_dict(
                 self.feature_extractor_2.to_dict(),

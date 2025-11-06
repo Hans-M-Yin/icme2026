@@ -358,7 +358,7 @@ class DiTBlock(nn.Module):
         #        没有看到Multi-instance attention啊
         # Prepare attention kwargs
         attention_kwargs = attention_kwargs or {}
-        # print('雨一直下',encoder_hidden_states.shape)
+        # print('雨一直下',encoder_hidden_states.shape, ' ', sketch_hidden_states.shape)
         # Notice that normalization is always applied before the real computation in the following blocks.
         # 0. Long Skip Connection
         if self.skip_linear is not None:
@@ -742,7 +742,8 @@ class TripoSGDiTModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         temb = self.time_embed(timestep).to(hidden_states.dtype)
         temb = self.time_proj(temb)
         temb = temb.unsqueeze(dim=1)  # unsqueeze to concat with hidden_states
-
+        print('TEMB:',temb.shape)
+        print("HIDDEN STATES:",hidden_states.shape)
         hidden_states = self.proj_in(hidden_states)
 
         # N + 1 token

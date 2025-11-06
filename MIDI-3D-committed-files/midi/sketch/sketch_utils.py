@@ -113,7 +113,7 @@ def prepare_sketch_images(
         num_object_per_scene = [num_object_per_scene] * batch_size
     if mode == "no":
         if cfg:
-            print('FUCKFUCKFUCKFUCKFUCKFUCKFUCKFUCKFUCKFUCKv')
+            # print('FUCKFUCKFUCKFUCKFUCKFUCKFUCKFUCKFUCKFUCKv')
             sketch_image_list = [[sketch_images[i]] * (2 *num_object_per_scene[i]) for i in range(batch_size)]
         else:
             sketch_image_list = [[sketch_images[i]] * num_object_per_scene[i] for i in range(batch_size)]
@@ -263,7 +263,7 @@ def get_sketch_spatial_gating_map(
     res = []
 
     for sketch_image_this_scene_list in sketch_image_per_instance:
-        print(sketch_image_this_scene_list)
+        # print(sketch_image_this_scene_list)
         gating_map_this_scene = [get_single_sketch_gating_map(i, patch_size, device=device) for i in sketch_image_this_scene_list]
         res.append(torch.stack(gating_map_this_scene))
     if concat:
@@ -312,7 +312,7 @@ def tensor_to_pil_list(tensor: torch.Tensor) -> list[Image.Image]:
     - 如果输入形状为 (C, H, W)，返回包含 1 个 Image 的列表。
     - 如果输入形状为 (B, C, H, W)，返回包含 B 个 Image 的列表。
     """
-    print('本来应该',type(tensor))
+    # print('本来应该',type(tensor))
     if tensor.ndim == 3:
         # 如果是 (C, H, W)，添加一个 Batch 维度使其成为 (1, C, H, W)
         tensor = tensor.unsqueeze(0)

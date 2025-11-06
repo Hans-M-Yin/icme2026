@@ -162,7 +162,9 @@ def prepare_pipeline(device, dtype):
     transformer = TripoSGDiTModel.from_pretrained(os.path.join(local_dir, "./transformer"),
                                                   strict=False,
                                                   ignore_mismatched_sizes=True,
-                                                  low_cpu_mem_usage=False)
+                                                  low_cpu_mem_usage=False,
+                                                  dit_fusion_layer_seq=[1,3,5,6,7,9,10,11,13,15,17,19,21])
+
     sketch_fusion_adapter = SketchFusionAdapter(sketch_fusion_adapter_config,
                                                 sketch_vision_tower_config)
     # for name, param in transformer.named_parameters():

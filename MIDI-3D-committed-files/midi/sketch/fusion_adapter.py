@@ -244,7 +244,7 @@ class SketchFusionAdapter(ModelMixin, nn.Module, PeftAdapterMixin):
         :return: projected latent sequences used for DiT fusion
         """
         # valina_latents: List[torch.tensor] [[B, L, H]], each element is one layer's latent.
-        print(self.sketch_tower.vision_tower)
+        # print(self.sketch_tower.vision_tower)
         valina_latents = self.sketch_tower(images)
         # print(self.vision_layer_seqs)
         # print(valina_latents.shape)
@@ -252,6 +252,10 @@ class SketchFusionAdapter(ModelMixin, nn.Module, PeftAdapterMixin):
         # selected_latents = [valina_latents[i] for i in self.vision_layer_seqs]
         # @TODO: Need Fix. selected_full_latent should be a list has the same length with DiT architecture.
         selected_full_latent = [None] * 21
+        # print(self.dit_layer_seqs)
+        # print(self.vision_layer_seqs)
+        # print(len(valina_latents))
+
         for i in range(len(self.dit_layer_seqs)):
             selected_full_latent[self.dit_layer_seqs[i]] = valina_latents[self.vision_layer_seqs[i]]
         # if self.enable_projector:

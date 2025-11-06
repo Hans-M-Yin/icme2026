@@ -10,7 +10,7 @@ from peft import LoraConfig, get_peft_model_state_dict
 from pytorch_lightning.utilities.rank_zero import rank_zero_only, rank_zero_warn
 from skimage import measure
 from transformers import CLIPVisionModelWithProjection, Dinov2Model
-
+import torch.nn as nn
 from ..models.autoencoders import TripoSGVAEModel
 from ..models.transformers import TripoSGDiTModel
 from ..pipelines.pipeline_midi import MIDIPipeline
@@ -31,6 +31,8 @@ from ..sketch.fusion_adapter import FusionAdapterConfig,SketchFusionAdapter
 from ..sketch.sketch_tower import SketchVisionTowerConfig,SketchVisionTower
 
 from ..utils.config import parse_structured
+
+from collections import defaultdict
 
 class MIDISystem(BaseSystem):
     @dataclass
@@ -94,11 +96,10 @@ class MIDISystem(BaseSystem):
         self.train_image_encoder_2_lora = (
             self.cfg.image_encoder_2_lora_config is not None
         )
-        self.sketch_vision_tower_lora_config = (
+        self.sketch_vision_tower_lora = (
             # @TODO: Whether apply lora into sketch image encoder?
             self.cfg.sketch_vision_tower_lora_config is not None
         )
-        # print(self.sketch_fusion_adapter_config)
         if self.cfg.training_sketch_module_from_scratch is not None:
             # load this module from scratch
 
@@ -107,12 +108,16 @@ class MIDISystem(BaseSystem):
             transformer = TripoSGDiTModel.from_pretrained(os.path.join(self.cfg.pretrained_model_name_or_path, "./transformer"),
                                                           strict=False,
                                                           ignore_mismatched_sizes=True,
+                                                          low_cpu_mem_usage=False,
                                                           dit_fusion_layer_seq=sketch_fusion_adapter_config.dit_layer_seqs)
+            transformer = transformer.to(device="cpu")
             sketch_fusion_adapter = SketchFusionAdapter(sketch_fusion_adapter_config, sketch_vision_tower_config)
             pipeline: MIDIPipeline = MIDIPipeline.from_pretrained(
                 self.cfg.pretrained_model_name_or_path,
                 transformer=transformer,
-                sketch_fusion_adapter=sketch_fusion_adapter
+                sketch_fusion_adapter=sketch_fusion_adapter,
+                strict=False,
+
             )
         else:
 
@@ -177,6 +182,7 @@ class MIDISystem(BaseSystem):
 
         self.vae.requires_grad_(False)
 
+        # assert False
         # Others
         if self.cfg.vae_slicing_length is not None:
             self.vae.enable_slicing(self.cfg.vae_slicing_length)
@@ -255,8 +261,8 @@ class MIDISystem(BaseSystem):
         # process sketch images and get latents
         sketch_latents = self.sketch_fusion_adapter(conditioning_sketch_images)
         # [ISSUES]: add dropout experimentally. But should check shape firstly.
-        sketch_latents[image_drop_mask] = 0.0
-
+        # sketch_latents[image_drop_mask] = 0.0
+        print(f"我在system_midi: {gating_map.shape}")
         # Model prediction
         model_pred = self.transformer(
             noisy_latents,
@@ -310,9 +316,9 @@ class MIDISystem(BaseSystem):
         conditioning_pixel_values_two = torch.cat(
             [batch["rgb"], batch["rgb_scene"], batch["mask"]], dim=1
         )
-        conditioning_sketch_images = batch['sketch']
-        gating_map = batch["gating_map"]
-
+        conditioning_sketch_images = batch.pop('sketch')
+        gating_map = batch.pop("gating_map")
+        print("我打你的M！")
 
         model_pred: Tensor = self(
             noisy_latents,
@@ -433,7 +439,7 @@ class MIDISystem(BaseSystem):
                 self.train_transformer_lora
                 or self.train_image_encoder_1_lora
                 or self.train_image_encoder_2_lora
-                or self.sketch_image_encoder_lora
+                or self.sketch_vision_tower_lora
                 # @TODO: add sketch vision tower lora
             ):
                 save_dir = os.path.join(
@@ -455,6 +461,7 @@ class MIDISystem(BaseSystem):
         self, batch, return_dict: bool = True, **kwargs
     ) -> Tuple[List[trimesh.Trimesh], torch.Tensor, torch.Tensor]:
         # Inference pipeline
+        # print(batch['rgb'].shape, ' @@@@ ', batch['sketch'].shape)
         output = self.pipeline(
             image=to_pil_image(batch["rgb"]),
             mask=to_pil_image(batch["mask"]),
@@ -613,11 +620,11 @@ class MIDISystem(BaseSystem):
         }
 
     def validation_step(self, batch, batch_idx):
-        try:
-            outputs = self.generate_samples(batch)
-        except Exception as e:
-            rank_zero_warn(f"Error in validation step: {e}")
-            return
+        # try:
+        outputs = self.generate_samples(batch)
+        # except Exception as e:
+        #     rank_zero_warn(f"Error in validation step: {e}")
+        #     return
 
         if (
             self.cfg.check_val_limit_rank > 0
@@ -663,7 +670,7 @@ class MIDISystem(BaseSystem):
             self.image_encoder_1.train()
         if self.train_image_encoder_2_lora:
             self.image_encoder_2.train()
-        if self.sketch_fusion_adapter_lora:
+        if self.sketch_vision_tower_lora:
             self.sketch_fusion_adapter.train()
 
     def test_step(self, batch, batch_idx):

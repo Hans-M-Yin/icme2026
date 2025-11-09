@@ -301,7 +301,7 @@ class MultiObjectWithSketchDataset(MultiObjectDataset):
                 "sketch",
                 "gating_map"
             ]
-            print(f"BEFORE, rgb: {rv['rgb'].shape} | gating: {rv['gating_map'].shape}")
+            # print(f"BEFORE, rgb: {rv['rgb'].shape} | gating: {rv['gating_map'].shape}")
             if num_instances < self.cfg.num_instances_per_batch:
                 pad = self.cfg.num_instances_per_batch - num_instances
                 indices = torch.randint(
@@ -311,7 +311,7 @@ class MultiObjectWithSketchDataset(MultiObjectDataset):
                     k: torch.cat([v, v[indices]]) if k in keys else v
                     for k, v in rv.items()
                 }
-                print(f"AFTER, rgb: {updated_dict['rgb'].shape} | gating: {updated_dict['gating_map'].shape}")
+                # print(f"AFTER, rgb: {updated_dict['rgb'].shape} | gating: {updated_dict['gating_map'].shape}")
 
             else:
                 indices = torch.randperm(num_instances, device=surfaces.device)
@@ -375,7 +375,7 @@ class MultiObjectWithSketchDataset(MultiObjectDataset):
                     1,
                     seg_images=[mask],
                     mode="zoom",
-                    cfg=True,
+                    cfg=False,
                 )
             else:
                 raise ValueError("No valid sketch images found.")
@@ -476,6 +476,7 @@ class MultiObjectWithSketchDataModule(pl.LightningDataModule):
             num_workers=self.cfg.num_workers,
             shuffle=True,
             collate_fn=self.train_dataset.collate,
+            persistent_workers=True
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -485,6 +486,7 @@ class MultiObjectWithSketchDataModule(pl.LightningDataModule):
             num_workers=self.cfg.num_workers,
             shuffle=False,
             collate_fn=self.val_dataset.collate,
+            persistent_workers=True
         )
 
     def test_dataloader(self) -> DataLoader:
@@ -494,6 +496,7 @@ class MultiObjectWithSketchDataModule(pl.LightningDataModule):
             num_workers=self.cfg.num_workers,
             shuffle=False,
             collate_fn=self.test_dataset.collate,
+            persistent_workers=True
         )
 
     def predict_dataloader(self) -> DataLoader:

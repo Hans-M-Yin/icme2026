@@ -607,6 +607,8 @@ class MultiObjectDataset(Dataset):
             return self._getitem(index)
         except Exception as e:
             print(f"Error in {self.all_scenes[index]}: {e}")
+            import traceback
+            traceback.print_exc()
             return self.__getitem__(random.randint(0, self.__len__() - 1))
 
     def collate(self, batch):

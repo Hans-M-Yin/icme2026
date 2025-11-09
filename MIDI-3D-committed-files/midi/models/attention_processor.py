@@ -1,4 +1,4 @@
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple, Union, Any
 
 import torch
 import torch.nn.functional as F
@@ -305,7 +305,6 @@ class MIAttnProcessor2_0:
             if encoder_hidden_states is None
             else encoder_hidden_states.shape
         )
-
         if attention_mask is not None:
             attention_mask = attn.prepare_attention_mask(
                 attention_mask, sequence_length, batch_size
@@ -499,10 +498,11 @@ class SketchFusionAttnProcessor:
         num_instances: Optional[Union[int, torch.IntTensor]] = None,
         gating_map: Optional[torch.Tensor] = None, # Check:
         gating_intensity: Optional[torch.Tensor] = None, # Check: sketch.sketch_utils.get_sketch_spatial_gating_map
+        num_instances_per_batch: Optional[Any] = None,
     ) -> torch.Tensor:
         from diffusers.models.embeddings import apply_rotary_emb
         # print('intensity',gating_intensity)
-        # print('map',torch.sum(gating_map))
+
         residual = hidden_states
         # print(f"### {gating_map.shape} ### {encoder_hidden_states.shape}")
         if attn.spatial_norm is not None:
@@ -522,7 +522,6 @@ class SketchFusionAttnProcessor:
             if encoder_hidden_states is None
             else encoder_hidden_states.shape
         )
-
         if attention_mask is not None:
             attention_mask = attn.prepare_attention_mask(
                 attention_mask, sequence_length, batch_size
@@ -591,31 +590,31 @@ class SketchFusionAttnProcessor:
                 gating_map.squeeze()
             assert gating_map.shape[-1] == key.shape[-2], f"Unequal sequence length of gating map and key vectors. Gating map: {gating_map.shape[-1]} while key values: {key.shape[-2]}"
             # print(gating_intensity.shape, ' ', gating_map.shape)
-            if gating_intensity.shape[0] == 2 * gating_map.shape[0]:
-                suppression = 1.0 - (1.0 - gating_intensity) * (1.0 - gating_map.repeat_interleave(2, dim=0))
-            elif gating_intensity.shape[0] == gating_map.shape[0]:
-                suppression = 1.0 - (1.0 - gating_intensity) * (1.0 - gating_map)
+            suppression = 1.0 - (1.0 - gating_intensity) * (1.0 - gating_map)
             key = key * suppression.unsqueeze(1).unsqueeze(-1)
 
         hidden_states = F.scaled_dot_product_attention(
             query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
         )
 
+        # print(f"###DiT AFTER: {torch.isnan(hidden_states).sum().item()} | {torch.max(hidden_states).item()} | {torch.min(hidden_states).item()} | Dtype: {query.dtype} ")
         hidden_states = hidden_states.transpose(1, 2).reshape(
             batch_size, -1, attn.heads * head_dim
         )
         hidden_states = hidden_states.to(query.dtype)
-
+        # print(f"###到底是哪里: {torch.isnan(hidden_states).sum().item()}")
+        # print(torch.isnan(attn.to_out[0].weight).sum().item(),f" | {torch.max(attn.to_out[0].weight).item()} | {torch.min(attn.to_out[0].weight).item()}")
         # linear proj
         hidden_states = attn.to_out[0](hidden_states)
+        # print(f"###DiT Linear: {torch.isnan(hidden_states).sum().item()}")
+
         # dropout
         hidden_states = attn.to_out[1](hidden_states)
-
+        # print(f"###DiT Dropout: {torch.isnan(hidden_states).sum().item()}")
         if input_ndim == 4:
             hidden_states = hidden_states.transpose(-1, -2).reshape(
                 batch_size, channel, height, width
             )
-
         if attn.residual_connection:
             hidden_states = hidden_states + residual
 

@@ -224,7 +224,6 @@ class MIDISystem(BaseSystem):
         num_instances: Union[torch.IntTensor, List[int]],
         num_instances_per_batch: int,
         *args,
-        **kwargs,
     ) -> Dict[str, Any]:
         bsz = noisy_latents.shape[0]
         num_batches = bsz // num_instances_per_batch
@@ -262,7 +261,6 @@ class MIDISystem(BaseSystem):
         sketch_latents = self.sketch_fusion_adapter(conditioning_sketch_images)
         # [ISSUES]: add dropout experimentally. But should check shape firstly.
         # sketch_latents[image_drop_mask] = 0.0
-        print(f"我在system_midi: {gating_map.shape}")
         # Model prediction
         model_pred = self.transformer(
             noisy_latents,
@@ -316,18 +314,19 @@ class MIDISystem(BaseSystem):
         conditioning_pixel_values_two = torch.cat(
             [batch["rgb"], batch["rgb_scene"], batch["mask"]], dim=1
         )
-        conditioning_sketch_images = batch.pop('sketch')
-        gating_map = batch.pop("gating_map")
-        print("我打你的M！")
+        conditioning_sketch_images = batch['sketch']
+        gating_map = batch["gating_map"]
+        # print("我打你的M！")
 
         model_pred: Tensor = self(
-            noisy_latents,
-            conditioning_pixel_values_one,
-            conditioning_pixel_values_two,
-            conditioning_sketch_images,
-            gating_map,
-            timesteps,
-            **batch,
+            noisy_latents=noisy_latents,
+            conditioning_pixel_values_one=conditioning_pixel_values_one,
+            conditioning_pixel_values_two=conditioning_pixel_values_two,
+            num_instances=batch["num_instances"],
+            num_instances_per_batch=num_instances_per_batch,
+            conditioning_sketch_images=conditioning_sketch_images,
+            gating_map=gating_map,
+            timesteps=timesteps,
         )["model_pred"]
 
         # Flow matching loss
@@ -461,8 +460,9 @@ class MIDISystem(BaseSystem):
         self, batch, return_dict: bool = True, **kwargs
     ) -> Tuple[List[trimesh.Trimesh], torch.Tensor, torch.Tensor]:
         # Inference pipeline
-        # print(batch['rgb'].shape, ' @@@@ ', batch['sketch'].shape)
+        # print('场景ID',batch['id'])
         output = self.pipeline(
+            id=batch['id'][0],
             image=to_pil_image(batch["rgb"]),
             mask=to_pil_image(batch["mask"]),
             image_scene=to_pil_image(batch["rgb_scene"]),
@@ -622,9 +622,6 @@ class MIDISystem(BaseSystem):
     def validation_step(self, batch, batch_idx):
         # try:
         outputs = self.generate_samples(batch)
-        # except Exception as e:
-        #     rank_zero_warn(f"Error in validation step: {e}")
-        #     return
 
         if (
             self.cfg.check_val_limit_rank > 0
@@ -659,7 +656,10 @@ class MIDISystem(BaseSystem):
         self.image_encoder_1.eval()
         self.image_encoder_2.eval()
         self.sketch_fusion_adapter.eval()
-
+    # def on_after_backward(self):
+    #     for name, param in self.named_parameters():
+    #         if param.grad is None:
+    #             print(name)
     def on_validation_epoch_end(self):
         self.save_model_weights()
         torch.cuda.empty_cache()

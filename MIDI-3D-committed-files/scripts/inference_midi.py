@@ -350,7 +350,7 @@ def run_midi(
         1,
         seg_images=[instance_masks],
         mode="zoom",
-        cfg=True,
+        cfg=False,
     )
     pipe_kwargs = {}
     if seed != -1 and isinstance(seed, int):
@@ -358,6 +358,7 @@ def run_midi(
 
     num_instances = len(instance_rgbs)
     outputs = pipe(
+        "TEST1",
         image=instance_rgbs,
         mask=instance_masks,
         image_scene=scene_rgbs,

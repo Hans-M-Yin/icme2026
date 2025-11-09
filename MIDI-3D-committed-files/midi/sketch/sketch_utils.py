@@ -69,7 +69,7 @@ def get_min_bounding_box(mask_array: np.ndarray) -> tuple:
     """
     y_coords, x_coords = np.where(mask_array == 1)
     if y_coords.size == 0:
-        return None
+        return 0, mask_array.shape[0], 0, mask_array.shape[1]
 
     y_min = y_coords.min()
     y_max = y_coords.max()

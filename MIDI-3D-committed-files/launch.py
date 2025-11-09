@@ -62,7 +62,7 @@ def main(args, extras) -> None:
     import pytorch_lightning as pl
     import torch
     from pytorch_lightning import Trainer
-    from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
+    from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, DeviceStatsMonitor
     from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger, WandbLogger
     from pytorch_lightning.utilities.rank_zero import rank_zero_only
     if args.typecheck:
@@ -131,6 +131,7 @@ def main(args, extras) -> None:
                 os.path.join(cfg.trial_dir, "configs"),
                 use_version=False,
             ),
+            DeviceStatsMonitor()
         ]
         if args.gradio:
             callbacks += [
@@ -199,15 +200,18 @@ def main(args, extras) -> None:
                 ["python " + " ".join(sys.argv), str(args)],
             )
         )()
+    from pytorch_lightning.profilers import AdvancedProfiler
 
+    profiler = AdvancedProfiler(dirpath=".", filename="perf_logs")
     trainer = Trainer(
         # @TODO: Check how to parallel model to accelerate training process.
         callbacks=callbacks,
         logger=loggers,
         inference_mode=False,
         accelerator="gpu",
-        strategy=pl.strategies.FSDPStrategy(sharding_strategy="FULL_SHARD", cpu_offload=True),
+        strategy="ddp_find_unused_parameters_true",
         devices=devices,
+        profiler=profiler,
         **cfg.trainer,
     )
 
@@ -290,4 +294,6 @@ if __name__ == "__main__":
         with contextlib.redirect_stdout(sys.stderr):
             main(args, extras)
     else:
+        import torch
+        torch.backends.cuda.sdp_kernel(enable_flash=True, enable_mem_efficient=False, enable_math=False)
         main(args, extras)

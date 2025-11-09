@@ -248,6 +248,7 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
     @torch.no_grad()
     def decode_latents(
         self,
+        id:str,
         latents: torch.Tensor,
         sampled_points: torch.Tensor,
         decode_progressive: bool = False,
@@ -277,6 +278,9 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
             bbox_sizes.append(bbox_size)
             bbox_mins.append(bbox_min)
             bbox_maxs.append(bbox_max)
+        if id == 'deaa4ac0-8d13-423f-930f-78fb25825e8d-Bedroom-5088':
+            torch.save(latents, "latents1-10.pth")
+            torch.save(sampled_points, "sampled_points1-10.pth")
 
         self.vae: TripoSGVAEModel
         output = self.vae.decode(
@@ -288,10 +292,13 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
 
         grid_sizes, bbox_sizes, bbox_mins, bbox_maxs = [], [], [], []
         sampled_points_list = []
-
+        if id == 'deaa4ac0-8d13-423f-930f-78fb25825e8d-Bedroom-5088':
+            torch.save(output, "tensor1-10.pth")
         for i in range(batch_size):
             sdf_ = output[i].squeeze(-1)  # [num_points]
             sampled_points_ = sampled_points[i]
+            print(f'id: {id} sampled points shape:{sampled_points_.shape}, sdf output: {torch.min(sdf_)}')
+
             occupied_points = sampled_points_[sdf_ <= 0]  # [num_occupied_points, 3]
 
             if occupied_points.shape[0] == 0:
@@ -329,6 +336,7 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
     @torch.no_grad()
     def __call__(
         self,
+        id: str,
         image: PipelineImageInput,
         mask: PipelineImageInput,
         image_scene: PipelineImageInput,
@@ -420,7 +428,8 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
             generator,
             latents,
         )
-
+        if id == 'deaa4ac0-8d13-423f-930f-78fb25825e8d-Bedroom-5088':
+            torch.save(latents, "prepare_latents1-10.pth")
         # 6. Denoising loop
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
@@ -474,22 +483,31 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype
+                if id == 'deaa4ac0-8d13-423f-930f-78fb25825e8d-Bedroom-5088':
+
+                    torch.save(latents, "before_scheduler_latents1-10.pth")
+                    torch.save(noise_pred, "noise_pred1-10.pth")
+                # print(f"ID: {id} | Step {i} | Latents nan count: {torch.isnan(latents).sum().item()} | Noise: {torch.isnan(noise_pred).sum().item()}")
                 latents = self.scheduler.step(
                     noise_pred, t, latents, return_dict=False
                 )[0]
-
+                if id == 'deaa4ac0-8d13-423f-930f-78fb25825e8d-Bedroom-5088':
+                    torch.save(latents, "scheduler_latents1-10.pth")
                 if latents.dtype != latents_dtype:
                     if torch.backends.mps.is_available():
                         # some platforms (eg. apple mps) misbehave due to a pytorch bug: https://github.com/pytorch/pytorch/pull/99272
                         latents = latents.to(latents_dtype)
                 # @TODO: 这里没搞懂是啥意思，Image embeds每一个step都在变吗？
                 if callback_on_step_end is not None:
+                    # print("HELLO")
                     callback_kwargs = {}
                     for k in callback_on_step_end_tensor_inputs:
                         callback_kwargs[k] = locals()[k]
                     callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
 
                     latents = callback_outputs.pop("latents", latents)
+                    if id == 'deaa4ac0-8d13-423f-930f-78fb25825e8d-Bedroom-5088':
+                        torch.save(latents, "callback_latents1-10.pth")
                     image_embeds_1 = callback_outputs.pop(
                         "image_embeds_1", image_embeds_1
                     )
@@ -515,6 +533,7 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
             output = latents
         else:
             output, grid_sizes, bbox_sizes, bbox_mins, bbox_maxs = self.decode_latents(
+                id,
                 latents,
                 sampled_points=sampled_points,
                 decode_progressive=decode_progressive,
@@ -624,7 +643,15 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
             set_sketch_attn_proc_func=lambda name, hs, cad, ap: SketchFusionAttnProcessor(),
             set_sketch_attn_module_names=set_sketch_attn_module_names,
         )
-
+        import torch.nn as nn
+        # re_init
+        for idx, blocks in enumerate(self.transformer.blocks):
+            if hasattr(blocks, 'attn_sketch'):
+                for name, module in blocks.attn_sketch.named_modules():
+                    if isinstance(module, nn.Linear):
+                        nn.init.xavier_uniform_(module.weight)
+                        if module.bias is not None:
+                            nn.init.zeros_(module.bias)
         # LoRA
 
         transformer_lora_config = None
@@ -634,16 +661,24 @@ class MIDIPipeline(DiffusionPipeline, TransformerDiffusionMixin, CustomAdapterMi
         if transformer_lora_config is not None:
             self.transformer.add_adapter(LoraConfig(**transformer_lora_config))
         else:
-            self.transformer.requires_grad_(False)
+            # self.transformer.requires_grad_(False)
+            # for param in transformer.parameters():
+            for param in self.transformer.parameters():
+                param.requires_grad = False
         if image_encoder_1_lora_config is not None:
             self.image_encoder_1.add_adapter(LoraConfig(**image_encoder_1_lora_config))
         else:
-            self.image_encoder_1.requires_grad_(False)
+            # self.image_encoder_1.requires_grad_(False)
+            for param in self.image_encoder_1.parameters():
+                param.requires_grad = False
         if image_encoder_2_lora_config is not None:
             self.image_encoder_2.add_adapter(LoraConfig(**image_encoder_2_lora_config))
         else:
-            self.image_encoder_2.requires_grad_(False)
-
+            # self.image_encoder_2.requires_grad_(False)
+            for param in self.image_encoder_2.parameters():
+                param.requires_grad = False
+        for param in self.vae.parameters():
+            param.requires_grad = False
         # @TODO: 这里需要注意，adapter里面的projector应该全参数训练。需要用loRA训练的应该是vision tower.
         # @TODO: 所以我估计这里的lora_config要着重处理一下
         if sketch_vision_tower_lora_config is not None:

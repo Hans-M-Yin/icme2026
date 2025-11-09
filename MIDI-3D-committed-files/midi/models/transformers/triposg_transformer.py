@@ -253,7 +253,15 @@ class DiTBlock(nn.Module):
                 bias=qkv_bias,
                 processor=TripoSGAttnProcessor2_0(),
             )
-
+            for name, module in self.attn_sketch.named_modules():
+                if isinstance(module, nn.Linear):
+                    nn.init.xavier_uniform_(module.weight)
+                    if module.bias is not None:
+                        nn.init.zeros_(module.bias)
+            # safe_reinitialize_attention(self.attn_sketch)
+            # print(f"初始化:| query : {torch.max(self.attn_sketch.to_q.weight).item()} | {torch.min(self.attn_sketch.to_q.weight).item()}")
+            # print(f"初始化:| key : {torch.max(self.attn_sketch.to_k.weight).item()} | {torch.min(self.attn_sketch.to_k.weight).item()}")
+            # print(f"初始化:| value : {torch.max(self.attn_sketch.to_v.weight).item()} | {torch.min(self.attn_sketch.to_v.weight).item()}")
         # 1. Self-Attn
         if use_self_attention:
             if (
@@ -274,7 +282,9 @@ class DiTBlock(nn.Module):
                 bias=qkv_bias,
                 processor=TripoSGAttnProcessor2_0(),
             )
-
+            # print(f"初始化2:| query : {torch.max(self.attn1.to_q.weight).item()} | {torch.min(self.attn1.to_q.weight).item()}")
+            # print(f"初始化2:| key : {torch.max(self.attn1.to_k.weight).item()} | {torch.min(self.attn1.to_k.weight).item()}")
+            # print(f"初始化2:| value : {torch.max(self.attn1.to_v.weight).item()} | {torch.min(self.attn1.to_v.weight).item()}")
         # 2. Cross-Attn
         if use_cross_attention:
             assert cross_attention_dim is not None
@@ -427,10 +437,15 @@ class DiTBlock(nn.Module):
                         gating_intensity=gating_intensity,
                         **attention_kwargs,
                     )
+                    # print(
+                    #     f"DiT before sketch nan count: {torch.isnan(hidden_states).sum().item()}")
+
                     # print(f'TYPE: {type(self.attn_sketch.processor)} ',hidden_states.shape, ' | ',xxx.shape, " | ",sketch_hidden_states.shape)
                     hidden_states = hidden_states + xxx
+                    # print(f"DiT after sketch nan count: {torch.isnan(hidden_states).sum().item()} | ( {hidden_states.shape})")
 
-        # FFN Layer ### TODO: switch norm2 and norm3 in the state dict
+
+                    # FFN Layer ### TODO: switch norm2 and norm3 in the state dict
         mlp_inputs = self.norm3(hidden_states)
         hidden_states = hidden_states + self.ff(mlp_inputs)
 
@@ -742,8 +757,8 @@ class TripoSGDiTModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         temb = self.time_embed(timestep).to(hidden_states.dtype)
         temb = self.time_proj(temb)
         temb = temb.unsqueeze(dim=1)  # unsqueeze to concat with hidden_states
-        print('TEMB:',temb.shape)
-        print("HIDDEN STATES:",hidden_states.shape)
+        # print('TEMB:',temb.shape)
+        # print("HIDDEN STATES:",hidden_states.shape)
         hidden_states = self.proj_in(hidden_states)
 
         # N + 1 token
@@ -796,6 +811,7 @@ class TripoSGDiTModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     gating_intensity=gating_intensity,
                     attention_kwargs=attention_kwargs,
                 )  # (N, L, D)
+                # print(f"After {layer}th block. Hidden_states nan count: {torch.isnan(hidden_states).sum().item()} | ({hidden_states.shape})")
 
             if layer < self.config.num_layers // 2:
                 skips.append(hidden_states)

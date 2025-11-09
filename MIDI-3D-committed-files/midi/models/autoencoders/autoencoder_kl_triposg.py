@@ -434,9 +434,7 @@ class TripoSGVAEModel(ModelMixin, ConfigMixin):
             random_start=self.training,
         )
         # assert isinstance(flattened_points[sampled_indices],torch.Tensor), f"{type(flattened_points[sampled_indices])}"
-        print('草你爹',batch_size, -1, num_channels)
-        print('草泥马', sampled_indices, " FUCK")
-        print('草泥大坝',flattened_points[sampled_indices].shape, ' | ', batch_size, -1, num_channels)
+        # print('草你爹',batch_size, -1, num_channels)
         sampled_points = flattened_points[sampled_indices].view(
             batch_size, -1, num_channels
         )
